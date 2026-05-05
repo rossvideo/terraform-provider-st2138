@@ -41,3 +41,4 @@ lcov.info
 DONE.md
 TODO.md
 internal/services/device/TESTING_NOTES.md
+scan_security.sh

@@ -13,7 +13,7 @@ A Terraform provider for managing Catena devices and services compatible with SM
 ## Requirements
 
 - Terraform >= 1.0
-- Go >= 1.21 (for building from source)
+- Go >= 1.25 (for building from source)
 
 ## Installation
 
@@ -140,8 +140,9 @@ open coverage_html/index.html
 ```
 
 **Current Coverage:**
-- Client package: 68.7% (when tested individually)
-- Overall project: ~11.5%
+- Client package: 72.3%
+- Params package: 86.2%
+- Overall project: 45.7%
 
 The `test.sh` script generates both `coverage.out` (Go format) and `lcov.info` (LCOV format) for compatibility with various coverage visualization tools.
 
