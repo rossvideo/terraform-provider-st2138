@@ -35,3 +35,9 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+coverage.out
+lcov.info
+
+DONE.md
+TODO.md
+internal/services/device/TESTING_NOTES.md
