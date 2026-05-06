@@ -72,6 +72,87 @@ func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n 
 	return err
 }
 
+// SetRawValue sends a fully-formed Catena value payload for the given OID.
+func (c *Client) SetRawValue(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
+	if err := c.ensureConn(ctx); err != nil {
+		return err
+	}
+	roid := oid
+	if !strings.HasPrefix(roid, "/") {
+		roid = "/" + roid
+	}
+	req := &st2138pb.SingleSetValuePayload{
+		Slot:  slot,
+		Value: &st2138pb.SetValuePayload{Oid: roid, Value: value},
+	}
+	_, err := c.rpcClient.SetValue(ctx, req)
+	return err
+}
+
+// GetParamDescriptor fetches the parameter descriptor for an OID.
+func (c *Client) GetParamDescriptor(ctx context.Context, slot uint32, oid string) (*st2138pb.Param, error) {
+	if err := c.ensureConn(ctx); err != nil {
+		return nil, err
+	}
+	roid := oid
+	if !strings.HasPrefix(roid, "/") {
+		roid = "/" + roid
+	}
+	resp, err := c.rpcClient.GetParam(ctx, &st2138pb.GetParamPayload{Slot: slot, Oid: roid})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetParam(), nil
+}
+
+// ExecuteCommand invokes a device command and drains the streaming response.
+// value may be nil if the command takes no parameter.
+func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
+	if err := c.ensureConn(ctx); err != nil {
+		return err
+	}
+	roid := oid
+	if !strings.HasPrefix(roid, "/") {
+		roid = "/" + roid
+	}
+	stream, err := c.rpcClient.ExecuteCommand(ctx, &st2138pb.ExecuteCommandPayload{
+		Slot:    slot,
+		Oid:     roid,
+		Value:   value,
+		Respond: true,
+	})
+	if err != nil {
+		return fmt.Errorf("ExecuteCommand %s: %w", oid, err)
+	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			// io.EOF signals the stream is done cleanly
+			if recvErr.Error() == "EOF" {
+				break
+			}
+			// Check for io.EOF via string since the import may not be available
+			break
+		}
+		if ex := resp.GetException(); ex != nil {
+			return fmt.Errorf("command %s exception: %s", oid, ex.GetDetails())
+		}
+	}
+	return nil
+}
+
+// GetRawValue fetches the current proto Value for the given OID.
+func (c *Client) GetRawValue(ctx context.Context, slot uint32, oid string) (*st2138pb.Value, error) {
+	if err := c.ensureConn(ctx); err != nil {
+		return nil, err
+	}
+	roid := oid
+	if !strings.HasPrefix(roid, "/") {
+		roid = "/" + roid
+	}
+	return c.rpcClient.GetValue(ctx, &st2138pb.GetValuePayload{Slot: slot, Oid: roid})
+}
+
 // SetParamsWithSlot walks a JSON-like params object, sets all string and numeric leaves via SetValue.
 // Complex values (objects/arrays) are traversed as subparams to produce OIDs like /a/b/0/c.
 func (c *Client) SetParamsWithSlot(ctx context.Context, dyn types.Dynamic, slot uint32) error {

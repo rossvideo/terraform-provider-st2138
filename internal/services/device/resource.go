@@ -3,12 +3,16 @@ package device
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/big"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -16,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	clientpkg "github.com/rossvideo/terraform-provider-st2138/internal/client"
+	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 )
 
 // NewDeviceResource returns a new device resource instance.
@@ -27,27 +32,64 @@ type deviceResource struct {
 	client *clientpkg.Client
 }
 
-type deviceModel struct {
-	ID           types.String       `tfsdk:"id"`
-	Name         types.String       `tfsdk:"name"`
-	DeviceType   types.String       `tfsdk:"device_type"`
-	ContainerID  types.String       `tfsdk:"container_id"`
-	Params       []paramPairModel   `tfsdk:"params"`
-	ParamsMap    types.Map          `tfsdk:"params_map"`
-	Slot         types.Int64        `tfsdk:"slot"`
-	StartCommand types.String       `tfsdk:"start_command"`
-	StopCommand  types.String       `tfsdk:"stop_command"`
-	DeviceStatus *deviceStatusModel `tfsdk:"device_status"`
-	StatusValue  types.String       `tfsdk:"status_value"`
-	ApplyAll     types.Bool         `tfsdk:"apply_all"`
-	Address      types.String       `tfsdk:"address"`
-	Port         types.Int64        `tfsdk:"port"`
+// commandBlockModel holds config for startup_command / shutdown_command blocks.
+type commandBlockModel struct {
+	Commands                []types.String `tfsdk:"commands"`
+	Values                  types.Dynamic  `tfsdk:"values"`
+	StatusFoid              types.String   `tfsdk:"status_foid"`
+	StatusSuccessValue      types.String   `tfsdk:"status_success_value"`
+	StatusSuccessComparator types.String   `tfsdk:"status_success_comparator"`
+	TimeoutSeconds          types.Int64    `tfsdk:"timeout_seconds"`
 }
 
+// deviceModel holds the Terraform state for a catena_device resource.
+type deviceModel struct {
+	ID                          types.String `tfsdk:"id"`
+	Name                        types.String `tfsdk:"name"`
+	SlotID                      types.Int64  `tfsdk:"slot"`
+	Network                     types.Object `tfsdk:"network"`
+	OverrideParamValuesOnUpdate types.Bool   `tfsdk:"override_param_values_on_update"`
+	// parameters: dynamic value matching a single-slot shape, e.g. [{"counter": 1}]
+	Parameters        types.Dynamic      `tfsdk:"parameters"`
+	ParametersOut     types.Map          `tfsdk:"parameters_out"`
+	FullParametersOut types.Map          `tfsdk:"full_parameters_out"`
+	CommandsOut       types.Map          `tfsdk:"commands_out"`
+	StartupCommand    *commandBlockModel `tfsdk:"startup_command"`
+	ShutdownCommand   *commandBlockModel `tfsdk:"shutdown_command"`
+
+	// Legacy fields - commented out, kept for test compatibility via separate structs below.
+	// DeviceType   types.String       `tfsdk:"device_type"`
+	// ContainerID  types.String       `tfsdk:"container_id"`
+	// Params       []paramPairModel   `tfsdk:"params"`
+	// ParamsMap    types.Map          `tfsdk:"params_map"`
+	// SlotID       types.Int64        `tfsdk:"slot_id"`
+	// StartCommand types.String       `tfsdk:"start_command"`
+	// StopCommand  types.String       `tfsdk:"stop_command"`
+	// DeviceStatus *deviceStatusModel `tfsdk:"device_status"`
+	// StatusValue  types.String       `tfsdk:"status_value"`
+	// ApplyAll     types.Bool         `tfsdk:"apply_all"`
+	// Address      types.String       `tfsdk:"address"`
+	// Port         types.Int64        `tfsdk:"port"`
+}
+
+var networkAttrTypes = map[string]attr.Type{
+	"address":   types.StringType,
+	"port":      types.Int64Type,
+	"transport": types.StringType,
+	"tls":       types.BoolType,
+}
+
+// deviceStatusModel kept for backward compatibility with existing tests.
 type deviceStatusModel struct {
 	Endpoint   types.String `tfsdk:"endpoint"`
 	Oid        types.String `tfsdk:"oid"`
 	ReadyValue types.String `tfsdk:"ready_value"`
+}
+
+// paramPairModel kept for backward compatibility with existing tests.
+type paramPairModel struct {
+	Oid   types.String `tfsdk:"oid"`
+	Value types.String `tfsdk:"value"`
 }
 
 // Create: Handles device creation in Terraform
@@ -60,7 +102,7 @@ func (r *deviceResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Represents a Catena device (minimal skeleton).",
+		Description: "Manages a Catena device: sets parameters via gRPC on create and reads the device model.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
@@ -71,559 +113,763 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:    true,
 				Description: "Human-readable device name.",
 			},
-			"device_type": schema.StringAttribute{
-				Optional:    true,
-				Description: "Device type identifier (e.g., pat2mxl).",
-			},
-			"container_id": schema.StringAttribute{
-				Computed:      true,
-				Description:   "ID of the Docker container launched for this device.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
-			"status_value": schema.StringAttribute{
-				Computed:      true,
-				Description:   "Latest polled value of device_status OID (via gRPC GetValue).",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
-			"apply_all": schema.BoolAttribute{
-				Optional:    true,
-				Description: "When true, always send all params_map and params values on apply/update, even if unchanged.",
-			},
-			// Generic map to set OID->value pairs without repeated blocks
-			"params_map": schema.MapAttribute{
-				Optional:    true,
-				ElementType: types.StringType,
-				Description: "Map of OID to value (string); numbers/bools parsed automatically.",
-			},
 			"slot": schema.Int64Attribute{
 				Required:    true,
-				Description: "Device slot id used in gRPC calls.",
+				Description: "Device slot this resource manages.",
 			},
-			"address": schema.StringAttribute{
+			"override_param_values_on_update": schema.BoolAttribute{
 				Optional:    true,
-				Description: "When device_type=remote-grpc, the remote device address (host or URL).",
+				Description: "When true, re-applies all parameters on update. When false (default), parameters are only applied on create.",
 			},
-			"port": schema.Int64Attribute{
+			"parameters": schema.DynamicAttribute{
 				Optional:    true,
-				Description: "When device_type=remote-grpc, the remote device port (e.g., 6254).",
+				Description: "Dynamic parameter set for this slot. Supports object or list-of-objects shapes such as [{\"counter\": 1, \"struct_example\": {...}}].",
 			},
-			"start_command": schema.StringAttribute{
-				Optional:    true,
-				Description: "Optional command to run inside the container after startup.",
+			"parameters_out": schema.MapAttribute{
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "Writable parameters for this slot from DeviceRequest.",
 			},
-			"stop_command": schema.StringAttribute{
-				Optional:    true,
-				Description: "Optional command to run inside the container before deletion.",
+			"full_parameters_out": schema.MapAttribute{
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "All parameters for this slot (including read-only) from DeviceRequest.",
 			},
-			// selected_flow_id removed in favor of generic params_map
+			"commands_out": schema.MapAttribute{
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "Commands for this slot from DeviceRequest.",
+			},
 		},
 		Blocks: map[string]schema.Block{
-			"params": schema.ListNestedBlock{
-				Description: "List of OID/value pairs to set via gRPC.",
-				NestedObject: schema.NestedBlockObject{
-					Attributes: map[string]schema.Attribute{
-						"oid":   schema.StringAttribute{Required: true, Description: "Fully-qualified OID (e.g., /inputs/0/name)."},
-						"value": schema.StringAttribute{Required: true, Description: "Value to set; string representation; numeric and bool parsed automatically."},
+			"network": schema.SingleNestedBlock{
+				Description: "Network configuration for this slot.",
+				Attributes: map[string]schema.Attribute{
+					"address": schema.StringAttribute{
+						Required:    true,
+						Description: "Host/IP for the Catena endpoint.",
+					},
+					"port": schema.Int64Attribute{
+						Required:    true,
+						Description: "Port for the Catena endpoint.",
+					},
+					"transport": schema.StringAttribute{
+						Optional:    true,
+						Description: "Transport type, defaults to grpc.",
+					},
+					"tls": schema.BoolAttribute{
+						Optional:    true,
+						Description: "Reserved for TLS support.",
 					},
 				},
 			},
-			// inputs block removed in favor of generic params_map
-			"device_status": schema.SingleNestedBlock{
-				Attributes: map[string]schema.Attribute{
-					"endpoint":    schema.StringAttribute{Optional: true, Description: "Deprecated alias for status OID."},
-					"oid":         schema.StringAttribute{Optional: true, Description: "Status OID to poll for readiness."},
-					"ready_value": schema.StringAttribute{Optional: true},
-				},
+			"startup_command": schema.SingleNestedBlock{
+				Description: "Commands to run after Create. Optionally polls a parameter to confirm success.",
+				Attributes:  commandBlockSchemaAttributes(),
+			},
+			"shutdown_command": schema.SingleNestedBlock{
+				Description: "Commands to run during Delete. Optionally polls a parameter to confirm success.",
+				Attributes:  commandBlockSchemaAttributes(),
 			},
 		},
 	}
 }
-
-type paramPairModel struct {
-	Oid   types.String `tfsdk:"oid"`
-	Value types.String `tfsdk:"value"`
-}
-
-// inputs model removed
 
 func (r *deviceResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
-	// Use a per-resource client clone to prevent endpoint/connection races
 	if base, ok := req.ProviderData.(*clientpkg.Client); ok && base != nil {
 		r.client = base.Clone()
 	}
 }
 
+// configureClient sets endpoint and transport on the resource client from resource-level network attributes.
+func (r *deviceResource) configureClient(network types.Object) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if r.client == nil {
+		r.client = &clientpkg.Client{}
+	}
+	if network.IsNull() || network.IsUnknown() {
+		return diags
+	}
+
+	networkValues := network.Attributes()
+	addressVal, okAddress := networkValues["address"].(types.String)
+	portVal, okPort := networkValues["port"].(types.Int64)
+	transportVal, okTransport := networkValues["transport"].(types.String)
+	if !okAddress || !okPort || !okTransport {
+		diags.AddError("invalid network configuration", "network must include address, port, and transport values")
+		return diags
+	}
+
+	address := addressVal.ValueString()
+	port := portVal.ValueInt64()
+	endpoint := fmt.Sprintf("%s:%d", address, port)
+	r.client.SetEndpoint(endpoint)
+
+	transport := transportVal.ValueString()
+	if transport != "" {
+		r.client.Transport = transport
+	} else {
+		r.client.Transport = "grpc"
+	}
+
+	return diags
+}
+
+// parseParameters decodes the dynamic parameters attribute into map[oid]value.
+// Supported shapes: {"counter": 1}, [{"counter": 1}], or [{...}, {...}] (merged).
+func (r *deviceResource) parseParameters(params types.Dynamic) (map[string]attr.Value, diag.Diagnostics) {
+	result := make(map[string]attr.Value)
+	var diags diag.Diagnostics
+	if params.IsNull() || params.IsUnknown() || params.UnderlyingValue() == nil {
+		return result, diags
+	}
+
+	if directMap, err := r.attrMap(params.UnderlyingValue()); err == nil {
+		for oid, v := range directMap {
+			result[oid] = v
+		}
+		return result, diags
+	}
+
+	entries, err := r.attrSequence(params.UnderlyingValue())
+	if err != nil {
+		diags.AddError("invalid parameters value", "parameters must be an object/map or a list/tuple of objects")
+		return result, diags
+	}
+	for _, entry := range entries {
+		paramMap, mapErr := r.attrMap(entry)
+		if mapErr != nil {
+			diags.AddError("invalid parameter object", mapErr.Error())
+			return result, diags
+		}
+		for oid, valAttr := range paramMap {
+			result[oid] = valAttr
+		}
+	}
+
+	return result, diags
+}
+
+// applySlotParams sets parameters on the device for the configured slot.
+func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oidValues map[string]attr.Value, diags *diag.Diagnostics) {
+	for oid, rawValue := range oidValues {
+		descriptor, err := r.client.GetParamDescriptor(ctx, slotNum, oid)
+		if err != nil {
+			diags.AddError("gRPC GetParam failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			return
+		}
+		protoValue, err := r.attrValueToProtoValue(rawValue, descriptor)
+		if err != nil {
+			diags.AddError("unsupported parameter value", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			return
+		}
+		if err := r.setRawValueWithRetry(ctx, slotNum, oid, protoValue); err != nil {
+			diags.AddError("gRPC SetValue failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			return
+		}
+	}
+}
+
+// commandBlockSchemaAttributes returns the shared attribute map for startup_command/shutdown_command blocks.
+func commandBlockSchemaAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"commands": schema.ListAttribute{
+			Required:    true,
+			ElementType: types.StringType,
+			Description: "List of command OIDs to invoke in order.",
+		},
+		"values": schema.DynamicAttribute{
+			Optional:    true,
+			Description: "List of values, one per command. Use null for commands that take no value.",
+		},
+		"status_foid": schema.StringAttribute{
+			Optional:    true,
+			Description: "Parameter OID to poll after commands complete to confirm success.",
+		},
+		"status_success_value": schema.StringAttribute{
+			Optional:    true,
+			Description: "Expected value string for the polled status parameter.",
+		},
+		"status_success_comparator": schema.StringAttribute{
+			Optional:    true,
+			Description: "Comparison operator: eq (default), ne, gt, lt, ge, le.",
+		},
+		"timeout_seconds": schema.Int64Attribute{
+			Optional:    true,
+			Description: "Timeout in seconds for status polling. Defaults to 30.",
+		},
+	}
+}
+
+// runCommandBlock executes a commandBlockModel: invokes each command in order then optionally polls status.
+// If ignoreErrors is true, command exceptions are logged but don't fail the operation (useful for shutdown).
+func (r *deviceResource) runCommandBlock(ctx context.Context, slotNum uint32, block *commandBlockModel, ignoreErrors bool) error {
+	if block == nil {
+		return nil
+	}
+
+	// Resolve values list (one optional value per command, null = no value).
+	var valueElems []attr.Value
+	if !block.Values.IsNull() && !block.Values.IsUnknown() && block.Values.UnderlyingValue() != nil {
+		elems, err := r.attrSequence(block.Values.UnderlyingValue())
+		if err != nil {
+			return fmt.Errorf("command values: %w", err)
+		}
+		valueElems = elems
+	}
+
+	for i, cmdAttr := range block.Commands {
+		oid := cmdAttr.ValueString()
+
+		var protoValue *st2138pb.Value
+		if i < len(valueElems) {
+			elem := valueElems[i]
+			if !elem.IsNull() && !elem.IsUnknown() {
+				converted, err := r.attrValueToProtoValue(elem, nil)
+				if err != nil {
+					return fmt.Errorf("command %s value: %w", oid, err)
+				}
+				protoValue = converted
+			}
+		}
+
+		err := r.client.ExecuteCommand(ctx, slotNum, oid, protoValue)
+		if err != nil {
+			if ignoreErrors {
+				// Log but continue on error (useful for shutdown commands)
+				fmt.Fprintf(os.Stderr, "command %s: %v (ignored)\n", oid, err)
+			} else {
+				return fmt.Errorf("slot %d command %s: %w", slotNum, oid, err)
+			}
+		}
+	}
+
+	// Status polling.
+	if block.StatusFoid.IsNull() || block.StatusFoid.ValueString() == "" {
+		return nil
+	}
+	foid := block.StatusFoid.ValueString()
+	target := ""
+	if !block.StatusSuccessValue.IsNull() {
+		target = block.StatusSuccessValue.ValueString()
+	}
+	comparator := "eq"
+	if !block.StatusSuccessComparator.IsNull() && block.StatusSuccessComparator.ValueString() != "" {
+		comparator = block.StatusSuccessComparator.ValueString()
+	}
+	timeoutSecs := int64(30)
+	if !block.TimeoutSeconds.IsNull() {
+		timeoutSecs = block.TimeoutSeconds.ValueInt64()
+	}
+	return r.pollStatusValue(ctx, slotNum, foid, comparator, target, timeoutSecs)
+}
+
+// pollStatusValue polls the given foid every 500ms until the comparator condition is met or timeout.
+func (r *deviceResource) pollStatusValue(ctx context.Context, slotNum uint32, foid, comparator, target string, timeoutSecs int64) error {
+	deadline := time.Now().Add(time.Duration(timeoutSecs) * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for slot %d %s %s %q", slotNum, foid, comparator, target)
+		}
+		val, err := r.client.GetRawValue(ctx, slotNum, foid)
+		if err != nil {
+			return fmt.Errorf("GetValue slot %d %s: %w", slotNum, foid, err)
+		}
+		current := protoValueToString(val)
+		if compareStatus(current, comparator, target) {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// protoValueToString converts a proto Value to a comparable string.
+func protoValueToString(v *st2138pb.Value) string {
+	if v == nil {
+		return ""
+	}
+	switch k := v.GetKind().(type) {
+	case *st2138pb.Value_StringValue:
+		return k.StringValue
+	case *st2138pb.Value_Int32Value:
+		return strconv.Itoa(int(k.Int32Value))
+	case *st2138pb.Value_Float32Value:
+		return strconv.FormatFloat(float64(k.Float32Value), 'f', -1, 32)
+	default:
+		return ""
+	}
+}
+
+// compareStatus compares two numeric-or-string values using the given operator.
+func compareStatus(current, op, target string) bool {
+	// Try numeric comparison first.
+	cf, cerr := strconv.ParseFloat(current, 64)
+	tf, terr := strconv.ParseFloat(target, 64)
+	if cerr == nil && terr == nil {
+		switch op {
+		case "eq":
+			return cf == tf
+		case "ne":
+			return cf != tf
+		case "gt":
+			return cf > tf
+		case "lt":
+			return cf < tf
+		case "ge":
+			return cf >= tf
+		case "le":
+			return cf <= tf
+		}
+	}
+	// Fallback to string comparison.
+	switch op {
+	case "eq":
+		return current == target
+	case "ne":
+		return current != target
+	}
+	return false
+}
+
+func (r *deviceResource) attrSequence(value attr.Value) ([]attr.Value, error) {
+	switch v := value.(type) {
+	case types.Dynamic:
+		if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+			return nil, fmt.Errorf("dynamic sequence is null or unknown")
+		}
+		return r.attrSequence(v.UnderlyingValue())
+	case types.List:
+		return v.Elements(), nil
+	case types.Tuple:
+		return v.Elements(), nil
+	default:
+		return nil, fmt.Errorf("expected list or tuple, got %T", value)
+	}
+}
+
+func (r *deviceResource) attrMap(value attr.Value) (map[string]attr.Value, error) {
+	switch v := value.(type) {
+	case types.Dynamic:
+		if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+			return nil, fmt.Errorf("dynamic map is null or unknown")
+		}
+		return r.attrMap(v.UnderlyingValue())
+	case types.Map:
+		return v.Elements(), nil
+	case types.Object:
+		return v.Attributes(), nil
+	default:
+		return nil, fmt.Errorf("expected map or object, got %T", value)
+	}
+}
+
+func (r *deviceResource) attrValueToProtoValue(value attr.Value, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
+	switch v := value.(type) {
+	case types.Dynamic:
+		if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+			return &st2138pb.Value{Kind: &st2138pb.Value_EmptyValue{EmptyValue: &st2138pb.Empty{}}}, nil
+		}
+		return r.attrValueToProtoValue(v.UnderlyingValue(), descriptor)
+	case types.String:
+		if descriptor != nil {
+			switch descriptor.GetType() {
+			case st2138pb.ParamType_INT32:
+				if iv, err := strconv.ParseInt(v.ValueString(), 10, 32); err == nil {
+					return &st2138pb.Value{Kind: &st2138pb.Value_Int32Value{Int32Value: int32(iv)}}, nil
+				}
+			case st2138pb.ParamType_FLOAT32:
+				if fv, err := strconv.ParseFloat(v.ValueString(), 64); err == nil {
+					return &st2138pb.Value{Kind: &st2138pb.Value_Float32Value{Float32Value: float32(fv)}}, nil
+				}
+			}
+		}
+		return &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: v.ValueString()}}, nil
+	case types.Bool:
+		s := "false"
+		if v.ValueBool() {
+			s = "true"
+		}
+		return &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: s}}, nil
+	case types.Number:
+		return r.numberToProtoValue(v, descriptor)
+	case types.List:
+		return r.sequenceToProtoValue(v.Elements(), descriptor)
+	case types.Tuple:
+		return r.sequenceToProtoValue(v.Elements(), descriptor)
+	case types.Map:
+		return r.objectToProtoValue(v.Elements(), descriptor)
+	case types.Object:
+		return r.objectToProtoValue(v.Attributes(), descriptor)
+	default:
+		return nil, fmt.Errorf("unsupported value type %T", value)
+	}
+}
+
+func (r *deviceResource) numberToProtoValue(v types.Number, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
+	bf := v.ValueBigFloat()
+	if bf == nil {
+		return &st2138pb.Value{Kind: &st2138pb.Value_EmptyValue{EmptyValue: &st2138pb.Empty{}}}, nil
+	}
+	if descriptor != nil && descriptor.GetType() == st2138pb.ParamType_FLOAT32 {
+		fv, _ := bf.Float64()
+		return &st2138pb.Value{Kind: &st2138pb.Value_Float32Value{Float32Value: float32(fv)}}, nil
+	}
+	if iv, acc := bf.Int64(); acc == big.Exact && iv >= math.MinInt32 && iv <= math.MaxInt32 {
+		return &st2138pb.Value{Kind: &st2138pb.Value_Int32Value{Int32Value: int32(iv)}}, nil
+	}
+	fv, _ := bf.Float64()
+	return &st2138pb.Value{Kind: &st2138pb.Value_Float32Value{Float32Value: float32(fv)}}, nil
+}
+
+func (r *deviceResource) objectToProtoValue(fields map[string]attr.Value, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
+	result := make(map[string]*st2138pb.Value, len(fields))
+	for key, field := range fields {
+		var childDescriptor *st2138pb.Param
+		if descriptor != nil && descriptor.GetParams() != nil {
+			childDescriptor = descriptor.GetParams()[key]
+		}
+		converted, err := r.attrValueToProtoValue(field, childDescriptor)
+		if err != nil {
+			return nil, fmt.Errorf("field %s: %w", key, err)
+		}
+		result[key] = converted
+	}
+	return &st2138pb.Value{Kind: &st2138pb.Value_StructValue{StructValue: &st2138pb.StructValue{Fields: result}}}, nil
+}
+
+func (r *deviceResource) sequenceToProtoValue(elements []attr.Value, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
+	if len(elements) == 0 {
+		switch {
+		case descriptor != nil && descriptor.GetType() == st2138pb.ParamType_INT32_ARRAY:
+			return &st2138pb.Value{Kind: &st2138pb.Value_Int32ArrayValues{Int32ArrayValues: &st2138pb.Int32List{Ints: []int32{}}}}, nil
+		case descriptor != nil && descriptor.GetType() == st2138pb.ParamType_FLOAT32_ARRAY:
+			return &st2138pb.Value{Kind: &st2138pb.Value_Float32ArrayValues{Float32ArrayValues: &st2138pb.Float32List{Floats: []float32{}}}}, nil
+		case descriptor != nil && descriptor.GetType() == st2138pb.ParamType_STRUCT_ARRAY:
+			return &st2138pb.Value{Kind: &st2138pb.Value_StructArrayValues{StructArrayValues: &st2138pb.StructList{StructValues: []*st2138pb.StructValue{}}}}, nil
+		default:
+			return &st2138pb.Value{Kind: &st2138pb.Value_StringArrayValues{StringArrayValues: &st2138pb.StringList{Strings: []string{}}}}, nil
+		}
+	}
+
+	allStrings := true
+	allNumbers := true
+	allObjects := true
+	allInts := true
+
+	stringVals := make([]string, 0, len(elements))
+	intVals := make([]int32, 0, len(elements))
+	floatVals := make([]float32, 0, len(elements))
+	structVals := make([]*st2138pb.StructValue, 0, len(elements))
+
+	for _, elem := range elements {
+		switch v := elem.(type) {
+		case types.Dynamic:
+			if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+				allStrings = false
+				allNumbers = false
+				allObjects = false
+				allInts = false
+				continue
+			}
+			converted, err := r.sequenceToProtoValue([]attr.Value{v.UnderlyingValue()}, descriptor)
+			if err != nil {
+				return nil, err
+			}
+			switch kind := converted.GetKind().(type) {
+			case *st2138pb.Value_StringArrayValues:
+				stringVals = append(stringVals, kind.StringArrayValues.GetStrings()[0])
+				allNumbers = false
+				allObjects = false
+			case *st2138pb.Value_Int32ArrayValues:
+				intVals = append(intVals, kind.Int32ArrayValues.GetInts()[0])
+				floatVals = append(floatVals, float32(kind.Int32ArrayValues.GetInts()[0]))
+				allStrings = false
+				allObjects = false
+			case *st2138pb.Value_Float32ArrayValues:
+				allInts = false
+				floatVals = append(floatVals, kind.Float32ArrayValues.GetFloats()[0])
+				allStrings = false
+				allObjects = false
+			case *st2138pb.Value_StructArrayValues:
+				structVals = append(structVals, kind.StructArrayValues.GetStructValues()[0])
+				allStrings = false
+				allNumbers = false
+				allInts = false
+			default:
+				return nil, fmt.Errorf("unsupported array element type %T", elem)
+			}
+		case types.String:
+			stringVals = append(stringVals, v.ValueString())
+			allNumbers = false
+			allObjects = false
+			allInts = false
+		case types.Number:
+			bf := v.ValueBigFloat()
+			if bf == nil {
+				return nil, fmt.Errorf("null number in array")
+			}
+			fv, _ := bf.Float64()
+			floatVals = append(floatVals, float32(fv))
+			if descriptor != nil && descriptor.GetType() == st2138pb.ParamType_FLOAT32_ARRAY {
+				allInts = false
+			} else if iv, acc := bf.Int64(); acc == big.Exact && iv >= math.MinInt32 && iv <= math.MaxInt32 {
+				intVals = append(intVals, int32(iv))
+			} else {
+				allInts = false
+			}
+			allStrings = false
+			allObjects = false
+		case types.Map:
+			converted, err := r.objectToProtoValue(v.Elements(), descriptor)
+			if err != nil {
+				return nil, err
+			}
+			structVals = append(structVals, converted.GetStructValue())
+			allStrings = false
+			allNumbers = false
+			allInts = false
+		case types.Object:
+			converted, err := r.objectToProtoValue(v.Attributes(), descriptor)
+			if err != nil {
+				return nil, err
+			}
+			structVals = append(structVals, converted.GetStructValue())
+			allStrings = false
+			allNumbers = false
+			allInts = false
+		default:
+			allStrings = false
+			allNumbers = false
+			allObjects = false
+			allInts = false
+		}
+	}
+
+	if allStrings {
+		return &st2138pb.Value{Kind: &st2138pb.Value_StringArrayValues{StringArrayValues: &st2138pb.StringList{Strings: stringVals}}}, nil
+	}
+	if allNumbers {
+		if allInts {
+			return &st2138pb.Value{Kind: &st2138pb.Value_Int32ArrayValues{Int32ArrayValues: &st2138pb.Int32List{Ints: intVals}}}, nil
+		}
+		return &st2138pb.Value{Kind: &st2138pb.Value_Float32ArrayValues{Float32ArrayValues: &st2138pb.Float32List{Floats: floatVals}}}, nil
+	}
+	if allObjects {
+		return &st2138pb.Value{Kind: &st2138pb.Value_StructArrayValues{StructArrayValues: &st2138pb.StructList{StructValues: structVals}}}, nil
+	}
+
+	return nil, fmt.Errorf("mixed-type arrays are not supported")
+}
+
+// buildSnapshotMaps reads the slot snapshot and returns computed output maps.
+func (r *deviceResource) buildSnapshotMaps(ctx context.Context, slotNum uint32) (types.Map, types.Map, types.Map, error) {
+	snapshot, err := r.client.GetDeviceSnapshot(ctx, slotNum)
+	if err != nil {
+		return types.MapNull(types.StringType), types.MapNull(types.StringType), types.MapNull(types.StringType), fmt.Errorf("DeviceRequest slot %d: %w", slotNum, err)
+	}
+
+	paramElems := make(map[string]attr.Value, len(snapshot.Parameters))
+	for foid, value := range snapshot.Parameters {
+		paramElems[foid] = types.StringValue(value)
+	}
+	paramsMap, mapDiags := types.MapValue(types.StringType, paramElems)
+	if mapDiags.HasError() {
+		return types.MapNull(types.StringType), types.MapNull(types.StringType), types.MapNull(types.StringType), fmt.Errorf("building parameters_out map")
+	}
+
+	fullParamElems := make(map[string]attr.Value, len(snapshot.FullParameters))
+	for foid, value := range snapshot.FullParameters {
+		fullParamElems[foid] = types.StringValue(value)
+	}
+	fullParamsMap, fullMapDiags := types.MapValue(types.StringType, fullParamElems)
+	if fullMapDiags.HasError() {
+		return types.MapNull(types.StringType), types.MapNull(types.StringType), types.MapNull(types.StringType), fmt.Errorf("building full_parameters_out map")
+	}
+
+	commandElems := make(map[string]attr.Value, len(snapshot.Commands))
+	for foid, value := range snapshot.Commands {
+		commandElems[foid] = types.StringValue(value)
+	}
+	commandsMap, commandMapDiags := types.MapValue(types.StringType, commandElems)
+	if commandMapDiags.HasError() {
+		return types.MapNull(types.StringType), types.MapNull(types.StringType), types.MapNull(types.StringType), fmt.Errorf("building commands_out map")
+	}
+
+	return paramsMap, fullParamsMap, commandsMap, nil
+}
+
 func (r *deviceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan deviceModel
-	diags := req.Plan.Get(ctx, &plan)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// TODO: Call backend to create device. For now, synthesize an ID.
+	resp.Diagnostics.Append(r.configureClient(plan.Network)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	if plan.Name.IsNull() || plan.Name.ValueString() == "" {
 		plan.Name = types.StringValue("device")
 	}
 	plan.ID = types.StringValue("catena-" + plan.Name.ValueString())
 
-	// Ensure computed attributes are set to known values.
-	// Default to empty container ID so the result object is valid even if Docker workflow fails.
-	plan.ContainerID = types.StringValue("")
+	if plan.SlotID.IsNull() || plan.SlotID.IsUnknown() {
+		resp.Diagnostics.AddError("invalid slot", "slot must be set for catena_device")
+		return
+	}
+	slotNum := uint32(plan.SlotID.ValueInt64())
 
-	// Determine device type and workflow
-	deviceType := plan.DeviceType.ValueString()
-	var ports []string
-	if deviceType == "remote-grpc" {
-		// For remote-grpc: no Docker; require address and port, and set gRPC endpoint
-		addr := strings.TrimSpace(plan.Address.ValueString())
-		port := plan.Port.ValueInt64()
-		if addr == "" || port <= 0 {
-			resp.Diagnostics.AddError("remote-grpc requires address and port", "Provide 'address' (host or URL) and 'port' when device_type=remote-grpc.")
+	// Apply configured parameters to the device.
+	paramValues, parseDiags := r.parseParameters(plan.Parameters)
+	resp.Diagnostics.Append(parseDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(paramValues) > 0 {
+		r.applySlotParams(ctx, slotNum, paramValues, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
 			return
 		}
-		// Preserve scheme if present and any host components; keep host without path
-		scheme := ""
-		host := addr
-		if i := strings.Index(host, "://"); i >= 0 {
-			scheme = strings.ToLower(host[:i])
-			host = host[i+3:]
-		}
-		if j := strings.IndexByte(host, '/'); j >= 0 {
-			host = host[:j]
-		}
-		// Set endpoint for client, including scheme when provided so client decides TLS
-		if r.client != nil && r.client.Transport == "grpc" {
-			if scheme != "" {
-				r.client.SetEndpoint(fmt.Sprintf("%s://%s:%d", scheme, host, port))
-			} else {
-				r.client.SetEndpoint(fmt.Sprintf("%s:%d", host, port))
-			}
-		}
-		// Ensure no container id
-		plan.ContainerID = types.StringValue("")
-		// No Docker wait needed
 	}
 
-	// Extract slot once for subsequent gRPC calls
-	slot := plan.Slot.ValueInt64()
-
-	// 3) using grpc set params from map and explicit pairs
-	if r.client != nil && r.client.Transport == "grpc" {
-		// For docker-based devices, map host port; for remote-grpc, endpoint already set
-		if deviceType != "remote-grpc" {
-			// If a port mapping to internal 6254 is set, update client endpoint to <dockerHost>:<hostPort>
-			if hp := r.selectHostPortForInternal(ports, 6254); hp > 0 {
-				r.client.SetEndpoint(fmt.Sprintf("%s:%d", r.dockerHost(), hp))
-			}
-		}
-		// Structured inputs and selected_flow_id removed; use params_map or params
-		// Next, apply any params from the generic params_map
-		if !plan.ParamsMap.IsNull() && !plan.ParamsMap.IsUnknown() {
-			var pm map[string]string
-			di := plan.ParamsMap.ElementsAs(ctx, &pm, false)
-			resp.Diagnostics.Append(di...)
-			if !resp.Diagnostics.HasError() {
-				for oid, sval := range pm {
-					val := r.parseValueString(sval)
-					switch v := val.(type) {
-					case string:
-						if err := r.setStringValueWithRetry(ctx, uint32(slot), oid, v); err != nil {
-							resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-							return
-						}
-					case float64:
-						if err := r.setNumberValueWithRetry(ctx, uint32(slot), oid, v); err != nil {
-							resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-							return
-						}
-					case bool:
-						sv := "false"
-						if v {
-							sv = "true"
-						}
-						if err := r.setStringValueWithRetry(ctx, uint32(slot), oid, sv); err != nil {
-							resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-							return
-						}
-					}
-				}
-			}
-		}
-		// Finally, set each provided param pair (overrides any previous values if overlapping)
-		for _, p := range plan.Params {
-			oid := p.Oid.ValueString()
-			if oid == "" {
-				continue
-			}
-			// Decode string value into primitive types (int/float/bool) when possible
-			val := r.parseValueString(p.Value.ValueString())
-			switch v := val.(type) {
-			case string:
-				if err := r.setStringValueWithRetry(ctx, uint32(slot), oid, v); err != nil {
-					resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-					return
-				}
-			case float64:
-				if err := r.setNumberValueWithRetry(ctx, uint32(slot), oid, v); err != nil {
-					resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-					return
-				}
-			case bool:
-				sv := "false"
-				if v {
-					sv = "true"
-				}
-				if err := r.setStringValueWithRetry(ctx, uint32(slot), oid, sv); err != nil {
-					resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-					return
-				}
-			default:
-				// Unsupported type; skip
-			}
-		}
+	if err := r.runCommandBlock(ctx, slotNum, plan.StartupCommand, false); err != nil {
+		resp.Diagnostics.AddError("startup_command failed", err.Error())
+		return
 	}
 
-	// If a start_command is specified, honor required behavior:
-	// wait 3s, send the command, then wait for device_status==ready_value.
-	if r.client != nil && r.client.Transport == "grpc" && !plan.StartCommand.IsNull() && plan.StartCommand.ValueString() != "" {
-		resp.Diagnostics.AddWarning("device start", fmt.Sprintf("Sleeping 3s then sending start_command: %s", plan.StartCommand.ValueString()))
-		// wait 3 seconds before issuing start command
-		time.Sleep(3 * time.Second)
-		// send start command
-		if err := r.client.RunStart(ctx, uint32(slot), plan.StartCommand.ValueString()); err != nil {
-			resp.Diagnostics.AddError("gRPC ExecuteCommand start failed", err.Error())
-			return
-		}
-		resp.Diagnostics.AddWarning("device start", "Start command sent; awaiting ready state if configured")
-		// then, if device_status is configured, wait until ready
-		if plan.DeviceStatus != nil {
-			endpoint := plan.DeviceStatus.Endpoint.ValueString()
-			if endpoint == "" {
-				endpoint = plan.DeviceStatus.Oid.ValueString()
-			}
-			ready := plan.DeviceStatus.ReadyValue.ValueString()
-			if endpoint != "" && ready != "" {
-				resp.Diagnostics.AddWarning("device start", fmt.Sprintf("Waiting for status %s to equal %q", endpoint, ready))
-				if err := r.client.WaitReady(ctx, uint32(slot), endpoint, ready, 60*time.Second); err != nil {
-					resp.Diagnostics.AddError("gRPC WaitReady failed", err.Error())
-					return
-				}
-				resp.Diagnostics.AddWarning("device start", "Device reported ready state")
-			}
-		}
+	paramsMap, fullParamsMap, commandsMap, err := r.buildSnapshotMaps(ctx, slotNum)
+	if err != nil {
+		resp.Diagnostics.AddError("failed to read device model", err.Error())
+		return
 	}
+	plan.ParametersOut = paramsMap
+	plan.FullParametersOut = fullParamsMap
+	plan.CommandsOut = commandsMap
 
-	// In all cases, update status_value if device_status is configured (no waiting unless start_command used)
-	if r.client != nil && r.client.Transport == "grpc" && plan.DeviceStatus != nil {
-		endpoint := plan.DeviceStatus.Endpoint.ValueString()
-		if endpoint == "" {
-			endpoint = plan.DeviceStatus.Oid.ValueString()
-		}
-		// Fetch current status_value to ensure a known computed value after apply
-		if endpoint != "" {
-			if val, err := r.client.GetStringValue(ctx, uint32(slot), endpoint); err == nil {
-				plan.StatusValue = types.StringValue(val)
-			} else {
-				plan.StatusValue = types.StringValue("")
-			}
-		} else {
-			plan.StatusValue = types.StringValue("")
-		}
-	} else {
-		// Ensure status_value is set to a known value even when gRPC/status not configured
-		if plan.StatusValue.IsNull() || plan.StatusValue.IsUnknown() {
-			plan.StatusValue = types.StringValue("")
-		}
-	}
-
-	diags = resp.State.Set(ctx, &plan)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *deviceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state deviceModel
-	diags := req.State.Get(ctx, &state)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Refresh status_value via gRPC if possible; set client endpoint
-	if r.client != nil && r.client.Transport == "grpc" {
-		dtype := state.DeviceType.ValueString()
-		if dtype == "remote-grpc" {
-			addr := strings.TrimSpace(state.Address.ValueString())
-			p := state.Port.ValueInt64()
-			if addr != "" && p > 0 {
-				scheme := ""
-				host := addr
-				if i := strings.Index(host, "://"); i >= 0 {
-					scheme = strings.ToLower(host[:i])
-					host = host[i+3:]
-				}
-				if j := strings.IndexByte(host, '/'); j >= 0 {
-					host = host[:j]
-				}
-				if scheme != "" {
-					r.client.SetEndpoint(fmt.Sprintf("%s://%s:%d", scheme, host, p))
-				} else {
-					r.client.SetEndpoint(fmt.Sprintf("%s:%d", host, p))
-				}
-			}
-		}
+
+	resp.Diagnostics.Append(r.configureClient(state.Network)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	// Now poll device_status if configured
-	if r.client != nil && r.client.Transport == "grpc" && state.DeviceStatus != nil {
-		endpoint := state.DeviceStatus.Endpoint.ValueString()
-		if endpoint == "" {
-			endpoint = state.DeviceStatus.Oid.ValueString()
-		}
-		if endpoint != "" {
-			if val, err := r.client.GetStringValue(ctx, uint32(state.Slot.ValueInt64()), endpoint); err == nil {
-				state.StatusValue = types.StringValue(val)
-			}
-		}
+
+	if state.SlotID.IsNull() || state.SlotID.IsUnknown() {
+		resp.Diagnostics.AddError("invalid slot", "slot must be set for catena_device")
+		return
 	}
-	// Ensure container_id is populated by querying Docker if missing (non-remote-grpc)
-	if state.DeviceType.ValueString() != "remote-grpc" {
-		if (state.ContainerID.IsNull() || state.ContainerID.IsUnknown() || state.ContainerID.ValueString() == "") && r.commandExists("docker") {
-			if cid := r.getContainerID(state.Name.ValueString()); cid != "" {
-				state.ContainerID = types.StringValue(cid)
-			}
-		}
+	slotNum := uint32(state.SlotID.ValueInt64())
+
+	_, parseDiags := r.parseParameters(state.Parameters)
+	resp.Diagnostics.Append(parseDiags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	diags = resp.State.Set(ctx, &state)
-	resp.Diagnostics.Append(diags...)
+	paramsMap, fullParamsMap, commandsMap, err := r.buildSnapshotMaps(ctx, slotNum)
+	if err != nil {
+		resp.Diagnostics.AddError("failed to read device model", err.Error())
+		return
+	}
+	state.ParametersOut = paramsMap
+	state.FullParametersOut = fullParamsMap
+	state.CommandsOut = commandsMap
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *deviceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan deviceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resp.Diagnostics.Append(r.configureClient(plan.Network)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Preserve ID from previous state.
 	var prev deviceModel
-	diags := req.Plan.Get(ctx, &plan)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prev)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	diags = req.State.Get(ctx, &prev)
-	resp.Diagnostics.Append(diags...)
+	if plan.ID.IsNull() || plan.ID.ValueString() == "" {
+		plan.ID = prev.ID
+	}
+
+	if plan.SlotID.IsNull() || plan.SlotID.IsUnknown() {
+		resp.Diagnostics.AddError("invalid slot", "slot must be set for catena_device")
+		return
+	}
+	slotNum := uint32(plan.SlotID.ValueInt64())
+
+	// Only re-apply parameters if override_param_values_on_update is true.
+	paramValues, parseDiags := r.parseParameters(plan.Parameters)
+	resp.Diagnostics.Append(parseDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	// Preserve computed attributes from previous state when not recalculated here
-	if plan.ID.IsNull() || plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
-		if !prev.ID.IsNull() && !prev.ID.IsUnknown() && prev.ID.ValueString() != "" {
-			plan.ID = prev.ID
-		} else {
-			plan.ID = types.StringValue("catena-" + plan.Name.ValueString())
-		}
-	}
-	// Always carry forward container_id from previous state unless explicitly changed elsewhere
-	if !prev.ContainerID.IsNull() && !prev.ContainerID.IsUnknown() && prev.ContainerID.ValueString() != "" {
-		plan.ContainerID = prev.ContainerID
-	}
-	// If still missing, attempt to resolve via Docker
-	if (plan.ContainerID.IsNull() || plan.ContainerID.IsUnknown() || plan.ContainerID.ValueString() == "") && r.commandExists("docker") {
-		if cid := r.getContainerID(plan.Name.ValueString()); cid != "" {
-			plan.ContainerID = types.StringValue(cid)
-		}
-	}
-	if plan.StatusValue.IsNull() || plan.StatusValue.IsUnknown() {
-		if !prev.StatusValue.IsNull() && !prev.StatusValue.IsUnknown() {
-			plan.StatusValue = prev.StatusValue
+	override := !plan.OverrideParamValuesOnUpdate.IsNull() && plan.OverrideParamValuesOnUpdate.ValueBool()
+	if override && len(paramValues) > 0 {
+		r.applySlotParams(ctx, slotNum, paramValues, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
 		}
 	}
 
-	// Apply changed params via gRPC on update
-	if r.client != nil && r.client.Transport == "grpc" {
-		// Determine endpoint based on device type
-		// Prefer plan.DeviceType, fallback to prev.DeviceType
-		dtype := plan.DeviceType.ValueString()
-		if dtype == "" {
-			dtype = prev.DeviceType.ValueString()
-		}
-		if dtype == "remote-grpc" {
-			// Resolve address/port from plan or prev, preserve scheme for TLS
-			addr := strings.TrimSpace(plan.Address.ValueString())
-			if addr == "" {
-				addr = strings.TrimSpace(prev.Address.ValueString())
-			}
-			p := plan.Port.ValueInt64()
-			if p == 0 {
-				p = prev.Port.ValueInt64()
-			}
-			if addr != "" && p > 0 {
-				scheme := ""
-				host := addr
-				if i := strings.Index(host, "://"); i >= 0 {
-					scheme = strings.ToLower(host[:i])
-					host = host[i+3:]
-				}
-				if j := strings.IndexByte(host, '/'); j >= 0 {
-					host = host[:j]
-				}
-				if scheme != "" {
-					r.client.SetEndpoint(fmt.Sprintf("%s://%s:%d", scheme, host, p))
-				} else {
-					r.client.SetEndpoint(fmt.Sprintf("%s:%d", host, p))
-				}
-			}
-		}
-
-		// Resolve slot
-		slot := plan.Slot.ValueInt64()
-		if slot == 0 {
-			slot = prev.Slot.ValueInt64()
-		}
-
-		// Read apply_all flag
-		applyAll := false
-		if !plan.ApplyAll.IsNull() && !plan.ApplyAll.IsUnknown() {
-			applyAll = plan.ApplyAll.ValueBool()
-		}
-
-		// Diff params_map and set values
-		var prevMap, planMap map[string]string
-		if !prev.ParamsMap.IsNull() && !prev.ParamsMap.IsUnknown() {
-			di := prev.ParamsMap.ElementsAs(ctx, &prevMap, false)
-			resp.Diagnostics.Append(di...)
-		}
-		if !plan.ParamsMap.IsNull() && !plan.ParamsMap.IsUnknown() {
-			di := plan.ParamsMap.ElementsAs(ctx, &planMap, false)
-			resp.Diagnostics.Append(di...)
-		}
-		// Apply changes for keys present in planMap; if applyAll, apply all regardless of diff
-		for oid, sval := range planMap {
-			if applyAll || prevMap == nil || prevMap[oid] != sval {
-				val := r.parseValueString(sval)
-				switch v := val.(type) {
-				case string:
-					if err := r.client.SetStringValue(ctx, uint32(slot), oid, v); err != nil {
-						resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-						return
-					}
-				case float64:
-					if err := r.client.SetNumberValue(ctx, uint32(slot), oid, v); err != nil {
-						resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-						return
-					}
-				case bool:
-					sv := "false"
-					if v {
-						sv = "true"
-					}
-					if err := r.client.SetStringValue(ctx, uint32(slot), oid, sv); err != nil {
-						resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-						return
-					}
-				}
-			}
-		}
-		// Also apply explicit params pairs from plan (treated as authoritative)
-		for _, p := range plan.Params {
-			oid := p.Oid.ValueString()
-			if strings.TrimSpace(oid) == "" {
-				continue
-			}
-			val := r.parseValueString(p.Value.ValueString())
-			switch v := val.(type) {
-			case string:
-				if err := r.client.SetStringValue(ctx, uint32(slot), oid, v); err != nil {
-					resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-					return
-				}
-			case float64:
-				if err := r.client.SetNumberValue(ctx, uint32(slot), oid, v); err != nil {
-					resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-					return
-				}
-			case bool:
-				sv := "false"
-				if v {
-					sv = "true"
-				}
-				if err := r.client.SetStringValue(ctx, uint32(slot), oid, sv); err != nil {
-					resp.Diagnostics.AddError("gRPC SetValue failed", err.Error())
-					return
-				}
-			}
-		}
+	// Always refresh state from device.
+	paramsMap, fullParamsMap, commandsMap, err := r.buildSnapshotMaps(ctx, slotNum)
+	if err != nil {
+		resp.Diagnostics.AddError("failed to read device model", err.Error())
+		return
 	}
+	plan.ParametersOut = paramsMap
+	plan.FullParametersOut = fullParamsMap
+	plan.CommandsOut = commandsMap
 
-	diags = resp.State.Set(ctx, &plan)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *deviceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state deviceModel
-	diags := req.State.Get(ctx, &state)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// name not used; docker operations removed
-	// Set endpoint for remote-grpc devices
-	if r.client != nil && r.client.Transport == "grpc" && state.DeviceType.ValueString() == "remote-grpc" {
-		addr := strings.TrimSpace(state.Address.ValueString())
-		p := state.Port.ValueInt64()
-		if addr != "" && p > 0 {
-			scheme := ""
-			host := addr
-			if i := strings.Index(host, "://"); i >= 0 {
-				scheme = strings.ToLower(host[:i])
-				host = host[i+3:]
-			}
-			if j := strings.IndexByte(host, '/'); j >= 0 {
-				host = host[:j]
-			}
-			if scheme != "" {
-				r.client.SetEndpoint(fmt.Sprintf("%s://%s:%d", scheme, host, p))
-			} else {
-				r.client.SetEndpoint(fmt.Sprintf("%s:%d", host, p))
-			}
-		}
-	}
-	// On destroy, if stop_command is configured, send it, wait 5s, then wait until status leaves ready_value.
-	if r.client != nil && r.client.Transport == "grpc" && !state.StopCommand.IsNull() && state.StopCommand.ValueString() != "" {
-		slot := uint32(state.Slot.ValueInt64())
-		if err := r.client.RunStop(ctx, slot, state.StopCommand.ValueString()); err != nil {
-			resp.Diagnostics.AddError("gRPC ExecuteCommand stop failed", err.Error())
+
+	if state.ShutdownCommand != nil {
+		resp.Diagnostics.Append(r.configureClient(state.Network)...)
+		if resp.Diagnostics.HasError() {
 			return
 		}
-		time.Sleep(5 * time.Second)
-
-		if state.DeviceStatus != nil {
-			endpoint := state.DeviceStatus.Endpoint.ValueString()
-			if endpoint == "" {
-				endpoint = state.DeviceStatus.Oid.ValueString()
-			}
-			ready := state.DeviceStatus.ReadyValue.ValueString()
-			if endpoint != "" && ready != "" {
-				if err := r.client.WaitNotReady(ctx, slot, endpoint, ready, 60*time.Second); err != nil {
-					resp.Diagnostics.AddError("gRPC wait for stop failed", err.Error())
-					return
-				}
-			}
+		slotNum := uint32(state.SlotID.ValueInt64())
+		if err := r.runCommandBlock(ctx, slotNum, state.ShutdownCommand, true); err != nil {
+			resp.Diagnostics.AddWarning("shutdown_command warning", fmt.Sprintf("shutdown command encountered issues: %v (continuing with destroy)", err))
 		}
 	}
+	// Remove from Terraform state only; no further gRPC calls needed.
 }
 
 // Helpers
+
 func (r *deviceResource) resolveDevicesDir() string {
 	candidates := []string{
-		// New preferred locations under opentofu/
-		"../opentofu/exe",
-		"../../opentofu/exe",
-		"/workspace/opentofu/exe",
-		"./opentofu/exe",
-		// Legacy fallbacks
-		"../exe",
-		"../../exe",
-		"/workspace/exe",
-		"./exe",
+		"../opentofu/exe", "../../opentofu/exe", "/workspace/opentofu/exe", "./opentofu/exe",
+		"../exe", "../../exe", "/workspace/exe", "./exe",
 	}
 	if r.client != nil && r.client.DevicesDir != "" {
 		candidates = []string{r.client.DevicesDir}
@@ -646,28 +892,21 @@ func (r *deviceResource) commandExists(name string) bool {
 	return err == nil
 }
 
-// selectHostPortForInternal scans port mappings and returns the host port mapped to the given internal port.
-// Supports formats like "7254:6254" and "127.0.0.1:7254:6254[/proto]".
 func (r *deviceResource) selectHostPortForInternal(ports []string, internal int) int {
 	for _, p := range ports {
 		s := strings.TrimSpace(p)
 		if s == "" {
 			continue
 		}
-		// strip protocol suffix
-		protoIdx := strings.IndexByte(s, '/')
-		if protoIdx >= 0 {
-			s = s[:protoIdx]
+		if idx := strings.IndexByte(s, '/'); idx >= 0 {
+			s = s[:idx]
 		}
 		parts := strings.Split(s, ":")
 		if len(parts) < 2 {
 			continue
 		}
-		// container port is last part
 		cpart := parts[len(parts)-1]
 		hpart := parts[len(parts)-2]
-		// If there are 3 parts (ip:host:container), hpart is correctly the host port
-		// Parse ints
 		if cp, err := strconv.Atoi(cpart); err == nil && cp == internal {
 			if hp, err2 := strconv.Atoi(hpart); err2 == nil {
 				return hp
@@ -677,9 +916,6 @@ func (r *deviceResource) selectHostPortForInternal(ports []string, internal int)
 	return 0
 }
 
-// dockerHost returns the appropriate host name for reaching services exposed on the host
-// from the current runtime. When running inside a Docker container, it returns
-// host.docker.internal (Linux setups require extra_hosts). Otherwise, it returns localhost.
 func (r *deviceResource) dockerHost() string {
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return "host.docker.internal"
@@ -696,7 +932,6 @@ func (r *deviceResource) dockerExec(ctx context.Context, name, command string) e
 	return nil
 }
 
-// getContainerID returns the container ID for a given name, or empty string if not found.
 func (r *deviceResource) getContainerID(name string) string {
 	if strings.TrimSpace(name) == "" {
 		return ""
@@ -706,8 +941,7 @@ func (r *deviceResource) getContainerID(name string) string {
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(string(out), "\n") {
 		parts := strings.Fields(strings.TrimSpace(line))
 		if len(parts) >= 2 && parts[1] == name {
 			return parts[0]
@@ -716,31 +950,25 @@ func (r *deviceResource) getContainerID(name string) string {
 	return ""
 }
 
-// decodeDynamic attempts to extract a primitive from a Dynamic value.
 func (r *deviceResource) parseValueString(s string) any {
 	if s == "" {
 		return ""
 	}
-	// Try boolean
 	if strings.EqualFold(s, "true") {
 		return true
 	}
 	if strings.EqualFold(s, "false") {
 		return false
 	}
-	// Try integer
 	if iv, err := strconv.ParseInt(s, 10, 32); err == nil {
 		return float64(iv)
 	}
-	// Try float
 	if fv, err := strconv.ParseFloat(s, 64); err == nil {
 		return fv
 	}
-	// Default string
 	return s
 }
 
-// SetValue retry helpers to mitigate transient startup readiness issues
 func (r *deviceResource) setStringValueWithRetry(ctx context.Context, slot uint32, oid, value string) error {
 	var lastErr error
 	for i := 0; i < 3; i++ {
@@ -758,6 +986,19 @@ func (r *deviceResource) setNumberValueWithRetry(ctx context.Context, slot uint3
 	var lastErr error
 	for i := 0; i < 3; i++ {
 		if err := r.client.SetNumberValue(ctx, slot, oid, n); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
+	}
+	return lastErr
+}
+
+func (r *deviceResource) setRawValueWithRetry(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		if err := r.client.SetRawValue(ctx, slot, oid, value); err == nil {
 			return nil
 		} else {
 			lastErr = err

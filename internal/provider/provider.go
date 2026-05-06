@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	clientpkg "github.com/rossvideo/terraform-provider-st2138/internal/client"
+	datasourcespkg "github.com/rossvideo/terraform-provider-st2138/internal/datasources"
 	devicepkg "github.com/rossvideo/terraform-provider-st2138/internal/services/device"
 )
 
@@ -87,5 +88,7 @@ func (p *catenaProvider) Resources(_ context.Context) []func() resource.Resource
 }
 
 func (p *catenaProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+	return []func() datasource.DataSource{
+		datasourcespkg.NewDeviceParamsDataSource,
+	}
 }

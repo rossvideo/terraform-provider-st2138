@@ -8,13 +8,9 @@ import (
 
 func TestDeviceModel_Initialization(t *testing.T) {
 	model := &deviceModel{
-		Slot: types.Int64Value(1),
 		Name: types.StringValue("test-device"),
 	}
 
-	if model.Slot.ValueInt64() != 1 {
-		t.Errorf("Slot = %d, want 1", model.Slot.ValueInt64())
-	}
 	if model.Name.ValueString() != "test-device" {
 		t.Errorf("Name = %s, want test-device", model.Name.ValueString())
 	}

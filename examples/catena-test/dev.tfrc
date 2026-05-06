@@ -1,0 +1,6 @@
+provider_installation {
+  dev_overrides {
+    "rossvideo/st2138" = "/home/nrochon/terraform-provider-st2138-1"
+  }
+  direct {}
+}
