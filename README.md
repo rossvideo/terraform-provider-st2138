@@ -23,7 +23,7 @@ A Terraform provider for managing Catena devices and services compatible with SM
 terraform {
   required_providers {
     catena = {
-      source = "registry.opentofu.org/local/catena"
+      source = "registry.opentofu.org/rossvideo/st2138"
     }
   }
 }
@@ -151,6 +151,24 @@ The `test.sh` script generates both `coverage.out` (Go format) and `lcov.info` (
 ```bash
 go build -o terraform-provider-st2138
 ```
+
+### Releasing (OpenTofu Registry)
+
+This repository includes a tag-driven GitHub Actions release workflow using GoReleaser.
+
+1. Create and push a semantic version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+2. GitHub Actions publishes release assets including:
+
+- `terraform-provider-st2138_<version>_<os>_<arch>.zip`
+- `terraform-provider-st2138_<version>_SHA256SUMS`
+
+These are required for OpenTofu Registry version detection.
 
 ## Documentation
 
