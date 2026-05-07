@@ -1,18 +1,21 @@
 terraform {
   required_providers {
-    catena = {
+    st2138 = {
       source = "rossvideo/st2138"
+      version = "0.0.1"
     }
   }
 }
 
-provider "catena" {}
+provider "st2138" {
+  # Configuration options
+}
 
 # This example will
 # on create: will add the device to the tofu inventory, and set all parameters to the values specified, then runs the startup_command block
 # on update: do nothing, since override_param_values_on_update is false 
 # on delete: runs the shutdown_command block, then deletes the device from the tofu inventory
-resource "catena_device" "one_of_everything" {
+resource "st2138_device" "one_of_everything" {
   name                            = "One of Everything"
   slot                            = 0
   network {
@@ -100,7 +103,7 @@ resource "catena_device" "one_of_everything" {
 output "device_params" {
   description = "writable parameters for the configured slot with decoded values where possible"
   value = {
-    for foid, raw in catena_device.one_of_everything.parameters_out :
+    for foid, raw in st2138_device.one_of_everything.parameters_out :
     foid => try(jsondecode(raw), raw)
   }
 }
@@ -108,7 +111,7 @@ output "device_params" {
 # output "device_full_params" {
 #   description = "all parameters for the configured slot with decoded values where possible"
 #   value = {
-#     for foid, raw in catena_device.one_of_everything.full_parameters_out :
+#     for foid, raw in st2138_device.one_of_everything.full_parameters_out :
 #     foid => try(jsondecode(raw), raw)
 #   }
 # }
@@ -116,7 +119,7 @@ output "device_params" {
 # output "device_commands" {
 #   description = "commands for the configured slot with decoded values where possible"
 #   value = {
-#     for foid, raw in catena_device.one_of_everything.commands_out :
+#     for foid, raw in st2138_device.one_of_everything.commands_out :
 #     foid => try(jsondecode(raw), raw)
 #   }
 
