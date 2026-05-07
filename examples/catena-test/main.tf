@@ -2,7 +2,7 @@ terraform {
   required_providers {
     st2138 = {
       source = "rossvideo/st2138"
-      version = "0.0.1"
+      version = "0.0.2"
     }
   }
 }
@@ -108,19 +108,19 @@ output "device_params" {
   }
 }
 # same as above but shows all params, including read only ones. Useful for debugging.
-# output "device_full_params" {
-#   description = "all parameters for the configured slot with decoded values where possible"
-#   value = {
-#     for foid, raw in st2138_device.one_of_everything.full_parameters_out :
-#     foid => try(jsondecode(raw), raw)
-#   }
-# }
+output "device_full_params" {
+  description = "all parameters for the configured slot with decoded values where possible"
+  value = {
+    for foid, raw in st2138_device.one_of_everything.full_parameters_out :
+    foid => try(jsondecode(raw), raw)
+  }
+}
 # Output the commands with native OpenTofu values where possible.
-# output "device_commands" {
-#   description = "commands for the configured slot with decoded values where possible"
-#   value = {
-#     for foid, raw in st2138_device.one_of_everything.commands_out :
-#     foid => try(jsondecode(raw), raw)
-#   }
+output "device_commands" {
+  description = "commands for the configured slot with decoded values where possible"
+  value = {
+    for foid, raw in st2138_device.one_of_everything.commands_out :
+    foid => try(jsondecode(raw), raw)
+  }
 
-# }
+}

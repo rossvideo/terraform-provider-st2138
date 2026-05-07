@@ -1,253 +1,146 @@
 # st2138_device Resource
 
-Manages a device that implements the SMPTE ST2138 protocol for parameter control via gRPC.
+Manages a Catena/ST2138 device.
 
-This resource can manage both local Docker-based devices and remote gRPC devices, allowing you to configure device parameters, execute commands, and monitor device status.
 
-## Example Usage
-
-### Basic Device Configuration
+## Example
 
 ```hcl
-resource "st2138_device" "example" {
-  name   = "my-device"
-  slot   = 0
-  
-  params_map = {
-    "/system/name" = "Production Device"
-    "/inputs/0/enabled" = "true"
+resource "st2138_device" "one_of_everything" {
+  name = "One of Everything"
+  slot = 0
+
+  network {
+    address   = "localhost"
+    port      = 6254
+    transport = "grpc"
+    tls       = false
+  }
+
+  override_param_values_on_update = false
+
+  parameters = [
+    {
+      counter        = 1
+      number_example = 0
+      string_example = "Hello World"
+      float_array    = [1.1, 2.2, 3.3]
+      struct_example = {
+        nested_struct = {
+          num_1 = 1
+          num_2 = 2
+        }
+      }
+    }
+  ]
+
+  startup_command {
+    commands                  = ["/fib_start"]
+    values                    = []
+    status_foid               = "number_example"
+    status_success_comparator = "ne"
+    status_success_value      = "0"
+    timeout_seconds           = 5
+  }
+
+  shutdown_command {
+    commands                  = ["/fib_stop", "/fib_set"]
+    values                    = [null, { int32_value = 0 }]
+    status_foid               = "number_example"
+    status_success_comparator = "eq"
+    status_success_value      = "0"
+    timeout_seconds           = 5
   }
 }
 ```
 
-### Remote gRPC Device
-
-```hcl
-resource "st2138_device" "remote" {
-  name        = "remote-device"
-  device_type = "remote-grpc"
-  address     = "192.168.1.100"
-  port        = 6254
-  slot        = 0
-  
-  params_map = {
-    "/audio/volume" = "75"
-    "/video/format" = "1080p60"
-  }
-}
-```
-
-### Device with Start/Stop Commands
-
-```hcl
-resource "st2138_device" "managed" {
-  name          = "managed-device"
-  slot          = 0
-  start_command = "/app/startup.sh"
-  stop_command  = "/app/shutdown.sh"
-  
-  # Monitor device readiness
-  device_status {
-    oid         = "/system/status"
-    ready_value = "running"
-  }
-  
-  params {
-    oid   = "/config/mode"
-    value = "production"
-  }
-  
-  params {
-    oid   = "/config/debug"
-    value = "false"
-  }
-}
-```
-
-### Device with Multiple Parameters
-
-```hcl
-resource "st2138_device" "video_processor" {
-  name   = "video-proc-1"
-  slot   = 0
-  
-  # Use params_map for bulk configuration
-  params_map = {
-    "/inputs/0/name"      = "Camera 1"
-    "/inputs/0/enabled"   = "true"
-    "/inputs/1/name"      = "Camera 2"
-    "/inputs/1/enabled"   = "false"
-    "/outputs/0/bitrate"  = "10000000"
-    "/processing/quality" = "high"
-  }
-  
-  # Apply all params even if unchanged
-  apply_all = true
-}
-```
-
-### Secure Remote Device (TLS)
-
-```hcl
-resource "st2138_device" "secure" {
-  name        = "secure-device"
-  device_type = "remote-grpc"
-  address     = "grpcs://secure.example.com"  # grpcs:// enables TLS
-  port        = 6254
-  slot        = 0
-  
-  params_map = {
-    "/security/encryption" = "enabled"
-  }
-}
-```
+See full working example in [examples/catena-test/main.tf](examples/catena-test/main.tf).
 
 ## Argument Reference
 
-### Required Arguments
+### Required
 
-* `slot` - (Required, Integer) Device slot ID used in gRPC calls. Must be >= 0.
+- `slot` (Number): Device slot managed by this resource.
+- `network` (Block): Network target for this slot.
+  - `address` (String, required): Hostname or IP.
+  - `port` (Number, required): gRPC port.
+  - `transport` (String, optional): Transport name. Defaults to `grpc` when empty.
+  - `tls` (Bool, optional): Reserved for TLS support in this block.
 
-### Optional Arguments
+### Optional
 
-* `name` - (Optional, String) Human-readable device name. Used for identification and logging.
-* `device_type` - (Optional, String) Device type identifier. Use `"remote-grpc"` for remote devices. Defaults to local device.
-* `address` - (Optional, String) Remote device address (required when `device_type = "remote-grpc"`). Can be:
-  - Hostname: `"192.168.1.100"`
-  - URL with scheme: `"grpc://device.local"` or `"grpcs://secure.device.local"` (grpcs enables TLS)
-* `port` - (Optional, Integer) Remote device port (required when `device_type = "remote-grpc"`). Typically 6254.
-* `params_map` - (Optional, Map of String) Map of OID → value pairs for bulk parameter configuration. Values are parsed automatically:
-  - Numbers: `"123"`, `"45.67"` → sent as numeric values
-  - Booleans: `"true"`, `"false"` → sent as boolean values
-  - Strings: `"any text"` → sent as string values
-* `start_command` - (Optional, String) Command to execute on the device after parameter configuration. The resource will:
-  1. Wait 3 seconds
-  2. Execute the command via gRPC
-  3. Wait for device to reach ready state (if `device_status` configured)
-* `stop_command` - (Optional, String) Command to execute before device deletion. The resource will:
-  1. Execute the command
-  2. Wait 5 seconds
-  3. Wait for device to leave ready state (if `device_status` configured)
-* `apply_all` - (Optional, Boolean) When `true`, always sends all parameters on update, even if unchanged. Useful for devices that reset to defaults. Defaults to `false`.
+- `name` (String): Human-readable name. If omitted, resource defaults to `device` for ID creation.
+- `override_param_values_on_update` (Bool):
+  - `false` (default behavior): parameters are applied on create only.
+  - `true`: re-applies configured `parameters` on update.
+- `parameters` (Dynamic): Parameter payload for the slot.
+  - Supports either an object or a list/tuple of objects.
+  - Objects are merged when a list is provided.
+- `startup_command` (Single block): Commands to execute after create.
+- `shutdown_command` (Single block): Commands to execute during destroy.
 
-### Blocks
+## startup_command and shutdown_command Block
 
-#### `params` Block
+Both blocks share the same schema:
 
-Optional repeatable block for individual parameter configuration. Parameters set via `params` blocks override those in `params_map`.
+- `commands` (List(String), required): Command OIDs executed in order.
+- `values` (Dynamic, optional): One value per command. Use `null` for no-value commands.
+- `status_foid` (String, optional): Parameter OID to poll after command execution.
+- `status_success_value` (String, optional): Target value used by comparator.
+- `status_success_comparator` (String, optional): One of `eq`, `ne`, `gt`, `lt`, `ge`, `le`.
+- `timeout_seconds` (Number, optional): Poll timeout in seconds (defaults to 30).
 
-* `oid` - (Required, String) Fully-qualified object identifier (e.g., `/inputs/0/name`).
-* `value` - (Required, String) Value to set. Automatically parsed as string, number, or boolean.
+Behavior notes:
 
-Example:
-```hcl
-params {
-  oid   = "/audio/input/0/gain"
-  value = "12.5"
-}
+- If a block is omitted, no commands are executed for that lifecycle phase.
+- `shutdown_command` errors are reported as warnings so destroy can continue.
 
-params {
-  oid   = "/audio/input/0/muted"
-  value = "false"
-}
-```
+## Attributes Reference
 
-#### `device_status` Block
+Computed attributes:
 
-Optional single block for monitoring device readiness.
+- `id`: Resource identifier in the form `catena-<name>`.
+- `parameters_out`: Writable parameters map for the slot.
+- `full_parameters_out`: Full parameters map (including read-only) for the slot.
+- `commands_out`: Command map for the slot.
 
-* `oid` - (Optional, String) Status OID to poll (e.g., `/system/state`).
-* `endpoint` - (Optional, String) Deprecated alias for `oid`. Use `oid` instead.
-* `ready_value` - (Optional, String) Expected value indicating device is ready (e.g., `"running"`, `"active"`).
+All output maps are `map(string)` values from the device snapshot.
 
-When configured with `start_command`, the resource waits up to 60 seconds for the status OID to match `ready_value`.
-When configured with `stop_command`, the resource waits up to 60 seconds for the status OID to differ from `ready_value`.
+## Lifecycle Behavior
 
-Example:
-```hcl
-device_status {
-  oid         = "/system/operational_state"
-  ready_value = "operational"
-}
-```
+Create:
 
-## Attribute Reference
+1. Configures client endpoint from `network`.
+2. Applies `parameters` (if provided).
+3. Runs `startup_command` (if provided).
+4. Reads snapshot and populates computed outputs.
 
-In addition to the arguments above, the following attributes are exported:
+Read:
 
-* `id` - Unique identifier for the device (format: `catena-<name>`).
-* `container_id` - Docker container ID (for local Docker-based devices). Empty for remote devices.
-* `status_value` - Current value of the `device_status` OID, refreshed on each read.
+1. Refreshes snapshot outputs.
+2. Validates `parameters` shape if present.
 
-## Import
+Update:
 
-Devices can be imported using their name:
+1. Reapplies `parameters` only when `override_param_values_on_update = true`.
+2. Refreshes snapshot outputs.
 
-```bash
-terraform import st2138_device.example my-device
-```
+Delete:
 
-## Behavior Notes
+1. Runs `shutdown_command` if present.
+2. Removes resource from state.
 
-### Parameter Handling
+## Notes On Parameters
 
-- **Type Detection**: Values in `params_map` and `params` are automatically parsed:
-  - `"123"` → integer
-  - `"45.67"` → float
-  - `"true"`, `"false"` → boolean
-  - `"any other text"` → string
-  
-- **Update Behavior**: By default, only changed parameters are sent on update. Set `apply_all = true` to always send all parameters.
-
-- **Precedence**: If the same OID appears in both `params_map` and `params` blocks, the `params` block value takes precedence.
-
-### Device Lifecycle
-
-1. **Create**: Sets all parameters, executes start command (if configured), waits for ready state
-2. **Read**: Polls status OID to refresh `status_value`
-3. **Update**: Sends changed parameters (or all if `apply_all = true`)
-4. **Delete**: Executes stop command (if configured), waits for device to stop
-
-### Retry Logic
-
-Parameter setting includes automatic retry logic (3 attempts with exponential backoff) to handle transient connection issues during device startup.
-
-### Remote vs Local Devices
-
-**Local Devices** (default):
-- Assumes device runs in Docker container
-- Automatically discovers container ID
-- Maps to Docker host networking
-
-**Remote Devices** (`device_type = "remote-grpc"`):
-- Connects directly to remote gRPC endpoint
-- Requires `address` and `port`
-- Supports TLS via `grpcs://` scheme
-- No Docker container management
+- `parameters` accepts nested values including numbers, strings, booleans, arrays, and objects.
+- Arrays must be homogeneous; mixed-type arrays are rejected.
+- Unknown or null dynamic values are treated as empty values where appropriate.
 
 ## Troubleshooting
 
-### Connection Errors
+If operations fail:
 
-If you see connection errors, verify:
-- Device is running and accessible
-- Port is correct (typically 6254)
-- Firewall allows gRPC traffic
-- For remote devices: address and port are correct
-- For local devices: Docker container is running
-
-### Parameter Set Failures
-
-If parameter setting fails:
-- Verify OID path is correct (use gRPC inspection tools)
-- Check value format matches parameter type
-- Ensure device is in ready state before setting parameters
-- Try setting `apply_all = true` if device resets parameters unexpectedly
-
-### Status Polling Timeouts
-
-If `WaitReady` times out (60s default):
-- Verify `device_status.oid` is correct
-- Check `ready_value` matches expected device state
-- Inspect device logs for startup issues
-- Increase timeout by adjusting `start_command` timing
+- Confirm `network.address` and `network.port` point to a reachable gRPC endpoint.
+- Confirm parameter/command OIDs exist for the selected `slot`.
+- Confirm parameter value shapes match device descriptors (especially arrays and nested structs).
+- For status polling issues, verify `status_foid`, comparator, and expected value.

@@ -4,6 +4,15 @@ This directory contains example configurations for the ST2138 Terraform provider
 
 ## Available Examples
 
+### [catena-test/](./catena-test/)
+Comprehensive current-schema example demonstrating:
+- `network` connection block (`address`, `port`, `transport`, `tls`)
+- Dynamic `parameters` object/list payloads
+- `startup_command` and `shutdown_command` lifecycle hooks
+- Decoding `parameters_out` in outputs
+
+**Use this when**: Validating the latest provider behavior end to end.
+
 ### [basic-device/](./basic-device/)
 Minimal device configuration demonstrating:
 - Simple device creation
@@ -43,7 +52,7 @@ Advanced parameter management demonstrating:
 ## Quick Start
 
 1. Choose an example directory
-2. Navigate to it: `cd basic-device/`
+2. Navigate to it: `cd catena-test/`
 3. Initialize Terraform: `terraform init`
 4. Review the plan: `terraform plan`
 5. Apply the configuration: `terraform apply`

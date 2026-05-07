@@ -1,146 +1,98 @@
 # ST2138 Provider
 
-The ST2138 provider enables Terraform to manage devices that implement the SMPTE ST2138 protocol for parameter control via gRPC.
+This provider manages Catena/ST2138 devices over gRPC.
 
-## Example Usage
+The current implementation in this repository is centered on one primary resource,
+`st2138_device`, with dynamic parameter writes and optional command blocks for lifecycle actions.
+
+## Current Provider Surface
+
+Provider source used by examples:
 
 ```hcl
 terraform {
   required_providers {
     st2138 = {
       source  = "rossvideo/st2138"
-      version = "~> 1.0"
+      version = "0.0.2"
     }
   }
 }
-
-provider "st2138" {}
-
-resource "st2138_device" "example" {
-  name = "my-device"
-  slot = 0
-  
-  params_map = {
-    "/system/name" = "Production Device"
-    "/config/mode" = "live"
-  }
-}
 ```
 
-## Provider Configuration
-
-The ST2138 provider can be configured with no arguments for default behavior, or with optional settings for customization.
-
-### Basic Configuration
+Provider block:
 
 ```hcl
 provider "st2138" {}
 ```
 
-This uses default settings:
-- gRPC transport
-- localhost:6254 as default endpoint
-- No TLS
+Optional provider arguments currently recognized:
 
-### Custom Configuration
+- `endpoint`: service endpoint such as `host:port`
+- `transport`: transport type, typically `grpc`
+- `devices_dir`: base directory for device executables/dockerfiles
+- `executables_dir`: alias for `devices_dir`
 
-```hcl
-provider "st2138" {
-  # Provider configuration options would go here
-  # (Currently no provider-level configuration required)
-}
-```
+## Resource And Data Source
 
-## Authentication
+Implemented types currently exposed by the provider:
 
-The ST2138 provider uses gRPC for communication. Authentication is handled at the network/transport layer:
+- `st2138_device` resource
+- `st2138_device_params` data source
 
-- **Local devices**: No authentication required (localhost connections)
-- **Remote devices**: Configure authentication via:
-  - Network security (VPN, private networks)
-  - gRPC TLS (`grpcs://` scheme)
-  - Firewall rules
+See [docs/resources/device.md](docs/resources/device.md) for the detailed resource reference.
 
-## Resources
+## st2138_device Highlights
 
-### st2138_device
+The current `st2138_device` schema supports:
 
-Manages a device implementing the SMPTE ST2138 protocol.
+- Required:
+  - `slot`
+  - `network` block (`address`, `port`)
+- Optional:
+  - `name`
+  - `override_param_values_on_update`
+  - `parameters` (dynamic object or list-of-objects)
+  - `network.transport`, `network.tls`
+  - `startup_command` block
+  - `shutdown_command` block
+- Computed outputs:
+  - `parameters_out`
+  - `full_parameters_out`
+  - `commands_out`
 
-**Key features:**
-- Configure device parameters via gRPC
-- Support for local and remote devices
-- Lifecycle management (start/stop commands)
-- Status monitoring and health checks
-- Bulk parameter configuration
-- Automatic type detection for values
+`startup_command` and `shutdown_command` are optional. If omitted, lifecycle actions skip those command executions.
 
-See [resources/device.md](./resources/device.md) for complete documentation.
+## Recommended Example
 
-## gRPC Transport
+The most up-to-date end-to-end example is:
 
-The provider communicates with devices using gRPC (Google Remote Procedure Call):
+- [examples/catena-test/main.tf](examples/catena-test/main.tf)
+- [examples/catena-test/README.md](examples/catena-test/README.md)
 
-- **Default port**: 6254
-- **Protocol**: HTTP/2
-- **TLS support**: Use `grpcs://` scheme in address
-- **Automatic reconnection**: Built-in retry logic for transient failures
+That example demonstrates:
 
-## OID Paths
+- Dynamic parameter payloads (`parameters`)
+- Startup and shutdown command execution
+- Status polling comparator behavior
+- Output decoding for parameter/command maps
 
-Device parameters are identified by OID (Object Identifier) paths:
+## Runtime Notes
 
-- Format: `/path/to/parameter`
-- Examples:
-  - `/system/name` - System name
-  - `/inputs/0/enabled` - First input enable status
-  - `/config/mode` - Configuration mode
-  
-OID paths are device-specific. Consult your device documentation for available parameters.
+- Transport defaults to `grpc` when not provided in `network.transport`.
+- The provider reads/writes values via gRPC and retries parameter set operations for transient failures.
+- `override_param_values_on_update = false` means parameter values are applied on create and not force-reapplied on every update.
 
-## Environment Variables
+## Local Development
 
-The provider does not currently use environment variables for configuration. All settings are specified in the provider and resource blocks.
+During local provider development (before registry release propagation), use the local
+development workflow documented in the catena example:
 
-## Debugging
+- [examples/catena-test/dev.tfrc](examples/catena-test/dev.tfrc)
+- [examples/catena-test/README.md](examples/catena-test/README.md)
 
-To enable debug logging for the provider:
+## Repository Links
 
-```bash
-export TF_LOG=DEBUG
-terraform apply
-```
-
-This shows detailed gRPC communication and parameter setting operations.
-
-## Compatibility
-
-- **Terraform**: >= 0.13
-- **Devices**: Any device implementing SMPTE ST2138 gRPC protocol
-- **Platforms**: Linux, macOS, Windows
-
-## Known Limitations
-
-1. **Read-only parameters**: Some device parameters may be read-only and cannot be set via the provider
-2. **Complex types**: Currently supports string, number, and boolean values. Complex nested structures may require multiple parameters
-3. **Concurrent access**: While the provider includes retry logic, extremely high concurrency may require rate limiting
-
-## Migration from Older Versions
-
-This provider is designed for new installations. If migrating from custom scripts:
-
-1. Inventory existing device configurations
-2. Map parameter names to OID paths
-3. Create Terraform configurations using `params_map`
-4. Import existing devices if possible
-5. Test in non-production environment first
-
-## Support and Contributing
-
-- **Issues**: Report bugs and feature requests on GitHub
-- **Documentation**: See `../examples/` for usage examples
-- **Contributing**: Pull requests welcome
-
-## License
-
-This provider is available under the Mozilla Public License 2.0.
+- Provider implementation: [internal/provider/provider.go](internal/provider/provider.go)
+- Device resource implementation: [internal/services/device/resource.go](internal/services/device/resource.go)
+- Examples index: [examples/README.md](examples/README.md)
