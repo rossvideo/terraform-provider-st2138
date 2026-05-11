@@ -11,7 +11,9 @@ import (
 
 	clientpkg "github.com/rossvideo/terraform-provider-st2138/internal/client"
 	datasourcespkg "github.com/rossvideo/terraform-provider-st2138/internal/datasources"
+	commandpkg "github.com/rossvideo/terraform-provider-st2138/internal/services/command"
 	devicepkg "github.com/rossvideo/terraform-provider-st2138/internal/services/device"
+	parameterspkg "github.com/rossvideo/terraform-provider-st2138/internal/services/parameters"
 )
 
 // New returns a new instance of the Catena provider.
@@ -29,7 +31,7 @@ type catenaProviderModel struct {
 }
 
 func (p *catenaProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "catena"
+	resp.TypeName = "st2138"
 }
 
 func (p *catenaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
@@ -83,7 +85,9 @@ func (p *catenaProvider) Configure(ctx context.Context, req provider.ConfigureRe
 
 func (p *catenaProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		commandpkg.NewCommandResource,
 		devicepkg.NewDeviceResource,
+		parameterspkg.NewParametersResource,
 	}
 }
 

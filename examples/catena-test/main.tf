@@ -1,20 +1,42 @@
-terraform {
-  required_providers {
-    st2138 = {
-      source = "rossvideo/st2138"
-      version = "0.0.2"
-    }
-  }
-}
-
-provider "st2138" {
-  # Configuration options
-}
 
 # This example will
 # on create: will add the device to the tofu inventory, and set all parameters to the values specified, then runs the startup_command block
 # on update: do nothing, since override_param_values_on_update is false 
 # on delete: runs the shutdown_command block, then deletes the device from the tofu inventory
+
+
+terraform {
+  required_providers {
+    st2138 = {
+      source = "rossvideo/st2138"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "st2138" {}
+
+resource "st2138_command" "start_ooe_command" {
+    command                 = "/fib_start"
+    status_foid              = "number_example"
+    status_success_comparator = "ne"
+    status_success_value     = "0"
+    timeout_seconds          = 5
+}
+resource "st2138_command" "stop_ooe_command" {
+    command                 = "/fib_stop"
+    timeout_seconds          = 5
+}
+
+resource "st2138_command" "set_0_ooe_command" {
+    command                 = "/fib_set"
+    value                   = { int32_value = 0 }
+    status_foid              = "number_example"
+    status_success_comparator = "eq"
+    status_success_value     = "0"
+    timeout_seconds          = 5
+}
+
 resource "st2138_device" "one_of_everything" {
   name                            = "One of Everything"
   slot                            = 0
@@ -78,22 +100,12 @@ resource "st2138_device" "one_of_everything" {
     },
   ]
 
-  startup_command {
-    commands                 = ["/fib_start"]
-    values                   = []
-    status_foid              = "number_example"
-    status_success_comparator = "ne"
-    status_success_value     = "0"
-    timeout_seconds          = 5
+  startup_commands {
+    commands = [st2138_command.set_0_ooe_command, st2138_command.start_ooe_command]
   }
 
-  shutdown_command {
-    commands                 = ["/fib_stop", "/fib_set"]
-    values                   = [null, { int32_value = 0 }]
-    status_foid              = "number_example"
-    status_success_comparator = "eq"
-    status_success_value     = "0"
-    timeout_seconds          = 5
+  shutdown_commands {
+    commands = [st2138_command.stop_ooe_command, st2138_command.set_0_ooe_command]
   }
   
 }

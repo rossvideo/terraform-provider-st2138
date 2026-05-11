@@ -1,0 +1,5 @@
+{
+    "name"        = "Basic Example Device"
+    "description" = "Minimal configuration example"
+    "enabled"     = "true"
+}

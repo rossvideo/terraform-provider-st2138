@@ -34,22 +34,12 @@ resource "st2138_device" "one_of_everything" {
     }
   ]
 
-  startup_command {
-    commands                  = ["/fib_start"]
-    values                    = []
-    status_foid               = "number_example"
-    status_success_comparator = "ne"
-    status_success_value      = "0"
-    timeout_seconds           = 5
+  startup_commands {
+    commands = [st2138_command.start_ooe_command]
   }
 
-  shutdown_command {
-    commands                  = ["/fib_stop", "/fib_set"]
-    values                    = [null, { int32_value = 0 }]
-    status_foid               = "number_example"
-    status_success_comparator = "eq"
-    status_success_value      = "0"
-    timeout_seconds           = 5
+  shutdown_commands {
+    commands = [st2138_command.stop_ooe_command, st2138_command.set_ooe_command]
   }
 }
 ```
@@ -76,24 +66,19 @@ See full working example in [examples/catena-test/main.tf](examples/catena-test/
 - `parameters` (Dynamic): Parameter payload for the slot.
   - Supports either an object or a list/tuple of objects.
   - Objects are merged when a list is provided.
-- `startup_command` (Single block): Commands to execute after create.
-- `shutdown_command` (Single block): Commands to execute during destroy.
+- `startup_commands` (Single block): Commands to execute after create.
+- `shutdown_commands` (Single block): Commands to execute during destroy.
 
-## startup_command and shutdown_command Block
+## startup_commands and shutdown_commands Block
 
 Both blocks share the same schema:
 
-- `commands` (List(String), required): Command OIDs executed in order.
-- `values` (Dynamic, optional): One value per command. Use `null` for no-value commands.
-- `status_foid` (String, optional): Parameter OID to poll after command execution.
-- `status_success_value` (String, optional): Target value used by comparator.
-- `status_success_comparator` (String, optional): One of `eq`, `ne`, `gt`, `lt`, `ge`, `le`.
-- `timeout_seconds` (Number, optional): Poll timeout in seconds (defaults to 30).
+- `commands` (Dynamic, required): List of `st2138_command` resources, command objects, or command OID strings.
 
 Behavior notes:
 
 - If a block is omitted, no commands are executed for that lifecycle phase.
-- `shutdown_command` errors are reported as warnings so destroy can continue.
+- `shutdown_commands` errors are reported as warnings so destroy can continue.
 
 ## Attributes Reference
 
@@ -103,6 +88,7 @@ Computed attributes:
 - `parameters_out`: Writable parameters map for the slot.
 - `full_parameters_out`: Full parameters map (including read-only) for the slot.
 - `commands_out`: Command map for the slot.
+- `status_value`: Most recent status value observed during lifecycle command polling.
 
 All output maps are `map(string)` values from the device snapshot.
 
@@ -112,7 +98,7 @@ Create:
 
 1. Configures client endpoint from `network`.
 2. Applies `parameters` (if provided).
-3. Runs `startup_command` (if provided).
+3. Runs `startup_commands` (if provided).
 4. Reads snapshot and populates computed outputs.
 
 Read:
@@ -127,8 +113,12 @@ Update:
 
 Delete:
 
-1. Runs `shutdown_command` if present.
+1. Runs `shutdown_commands` if present.
 2. Removes resource from state.
+
+Legacy note:
+
+- Older single-block forms `startup_command` and `shutdown_command` are no longer part of the primary example path.
 
 ## Notes On Parameters
 

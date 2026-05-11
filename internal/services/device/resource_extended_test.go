@@ -11,14 +11,14 @@ import (
 func TestDeviceResource_Metadata(t *testing.T) {
 	r := &deviceResource{}
 	req := resource.MetadataRequest{
-		ProviderTypeName: "catena",
+		ProviderTypeName: "st2138",
 	}
 	resp := &resource.MetadataResponse{}
 
 	r.Metadata(context.Background(), req, resp)
 
-	if resp.TypeName != "catena_device" {
-		t.Errorf("Metadata() TypeName = %s, want catena_device", resp.TypeName)
+	if resp.TypeName != "st2138_device" {
+		t.Errorf("Metadata() TypeName = %s, want st2138_device", resp.TypeName)
 	}
 }
 

@@ -32,17 +32,12 @@ type deviceResource struct {
 	client *clientpkg.Client
 }
 
-// commandBlockModel holds config for startup_command / shutdown_command blocks.
-type commandBlockModel struct {
-	Commands                []types.String `tfsdk:"commands"`
-	Values                  types.Dynamic  `tfsdk:"values"`
-	StatusFoid              types.String   `tfsdk:"status_foid"`
-	StatusSuccessValue      types.String   `tfsdk:"status_success_value"`
-	StatusSuccessComparator types.String   `tfsdk:"status_success_comparator"`
-	TimeoutSeconds          types.Int64    `tfsdk:"timeout_seconds"`
+// commandRefsBlockModel stores reusable command refs for startup/shutdown execution.
+type commandRefsBlockModel struct {
+	Commands types.Dynamic `tfsdk:"commands"`
 }
 
-// deviceModel holds the Terraform state for a catena_device resource.
+// deviceModel holds the Terraform state for a st2138_device resource.
 type deviceModel struct {
 	ID                          types.String `tfsdk:"id"`
 	Name                        types.String `tfsdk:"name"`
@@ -50,12 +45,13 @@ type deviceModel struct {
 	Network                     types.Object `tfsdk:"network"`
 	OverrideParamValuesOnUpdate types.Bool   `tfsdk:"override_param_values_on_update"`
 	// parameters: dynamic value matching a single-slot shape, e.g. [{"counter": 1}]
-	Parameters        types.Dynamic      `tfsdk:"parameters"`
-	ParametersOut     types.Map          `tfsdk:"parameters_out"`
-	FullParametersOut types.Map          `tfsdk:"full_parameters_out"`
-	CommandsOut       types.Map          `tfsdk:"commands_out"`
-	StartupCommand    *commandBlockModel `tfsdk:"startup_command"`
-	ShutdownCommand   *commandBlockModel `tfsdk:"shutdown_command"`
+	Parameters        types.Dynamic          `tfsdk:"parameters"`
+	ParametersOut     types.Map              `tfsdk:"parameters_out"`
+	FullParametersOut types.Map              `tfsdk:"full_parameters_out"`
+	CommandsOut       types.Map              `tfsdk:"commands_out"`
+	StatusValue       types.String           `tfsdk:"status_value"`
+	StartupCommands   *commandRefsBlockModel `tfsdk:"startup_commands"`
+	ShutdownCommands  *commandRefsBlockModel `tfsdk:"shutdown_commands"`
 
 	// Legacy fields - commented out, kept for test compatibility via separate structs below.
 	// DeviceType   types.String       `tfsdk:"device_type"`
@@ -140,6 +136,10 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				ElementType: types.StringType,
 				Description: "Commands for this slot from DeviceRequest.",
 			},
+			"status_value": schema.StringAttribute{
+				Computed:    true,
+				Description: "Most recent status value observed from command status polling when available.",
+			},
 		},
 		Blocks: map[string]schema.Block{
 			"network": schema.SingleNestedBlock{
@@ -163,14 +163,26 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					},
 				},
 			},
-			"startup_command": schema.SingleNestedBlock{
-				Description: "Commands to run after Create. Optionally polls a parameter to confirm success.",
-				Attributes:  commandBlockSchemaAttributes(),
+			"startup_commands": schema.SingleNestedBlock{
+				Description: "Reusable command refs to run after Create.",
+				Attributes: map[string]schema.Attribute{
+					"commands": schema.DynamicAttribute{
+						Required:    true,
+						Description: "List of st2138_command resources, command objects, or command OID strings.",
+					},
+				},
 			},
-			"shutdown_command": schema.SingleNestedBlock{
-				Description: "Commands to run during Delete. Optionally polls a parameter to confirm success.",
-				Attributes:  commandBlockSchemaAttributes(),
+			"shutdown_commands": schema.SingleNestedBlock{
+				Description: "Reusable command refs to run during Delete.",
+				Attributes: map[string]schema.Attribute{
+					"commands": schema.DynamicAttribute{
+						Required:    true,
+						Description: "List of st2138_command resources, command objects, or command OID strings.",
+					},
+				},
 			},
+			// Legacy startup_command/shutdown_command blocks are intentionally omitted
+			// from schema to match example usage.
 		},
 	}
 }
@@ -273,99 +285,168 @@ func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oi
 	}
 }
 
-// commandBlockSchemaAttributes returns the shared attribute map for startup_command/shutdown_command blocks.
-func commandBlockSchemaAttributes() map[string]schema.Attribute {
-	return map[string]schema.Attribute{
-		"commands": schema.ListAttribute{
-			Required:    true,
-			ElementType: types.StringType,
-			Description: "List of command OIDs to invoke in order.",
-		},
-		"values": schema.DynamicAttribute{
-			Optional:    true,
-			Description: "List of values, one per command. Use null for commands that take no value.",
-		},
-		"status_foid": schema.StringAttribute{
-			Optional:    true,
-			Description: "Parameter OID to poll after commands complete to confirm success.",
-		},
-		"status_success_value": schema.StringAttribute{
-			Optional:    true,
-			Description: "Expected value string for the polled status parameter.",
-		},
-		"status_success_comparator": schema.StringAttribute{
-			Optional:    true,
-			Description: "Comparison operator: eq (default), ne, gt, lt, ge, le.",
-		},
-		"timeout_seconds": schema.Int64Attribute{
-			Optional:    true,
-			Description: "Timeout in seconds for status polling. Defaults to 30.",
-		},
-	}
+type commandInvocation struct {
+	OID                     string
+	Value                   attr.Value
+	StatusFoid              string
+	StatusSuccessValue      string
+	StatusSuccessComparator string
+	TimeoutSeconds          int64
 }
 
-// runCommandBlock executes a commandBlockModel: invokes each command in order then optionally polls status.
-// If ignoreErrors is true, command exceptions are logged but don't fail the operation (useful for shutdown).
-func (r *deviceResource) runCommandBlock(ctx context.Context, slotNum uint32, block *commandBlockModel, ignoreErrors bool) error {
-	if block == nil {
-		return nil
+func (r *deviceResource) runCommandRefsBlock(ctx context.Context, slotNum uint32, block *commandRefsBlockModel, ignoreErrors bool) (string, error) {
+	if block == nil || block.Commands.IsNull() || block.Commands.IsUnknown() || block.Commands.UnderlyingValue() == nil {
+		return "", nil
 	}
 
-	// Resolve values list (one optional value per command, null = no value).
-	var valueElems []attr.Value
-	if !block.Values.IsNull() && !block.Values.IsUnknown() && block.Values.UnderlyingValue() != nil {
-		elems, err := r.attrSequence(block.Values.UnderlyingValue())
-		if err != nil {
-			return fmt.Errorf("command values: %w", err)
+	entries, err := r.attrSequence(block.Commands.UnderlyingValue())
+	if err != nil {
+		return "", fmt.Errorf("commands must be a list or tuple: %w", err)
+	}
+
+	lastStatus := ""
+	for _, entry := range entries {
+		invocation, convErr := r.commandInvocationFromAttr(entry)
+		if convErr != nil {
+			if ignoreErrors {
+				fmt.Fprintf(os.Stderr, "command conversion error: %v (ignored)\n", convErr)
+				continue
+			}
+			return lastStatus, convErr
 		}
-		valueElems = elems
-	}
-
-	for i, cmdAttr := range block.Commands {
-		oid := cmdAttr.ValueString()
 
 		var protoValue *st2138pb.Value
-		if i < len(valueElems) {
-			elem := valueElems[i]
-			if !elem.IsNull() && !elem.IsUnknown() {
-				converted, err := r.attrValueToProtoValue(elem, nil)
-				if err != nil {
-					return fmt.Errorf("command %s value: %w", oid, err)
+		if invocation.Value != nil && !invocation.Value.IsNull() && !invocation.Value.IsUnknown() {
+			protoValue, convErr = r.attrValueToProtoValue(invocation.Value, nil)
+			if convErr != nil {
+				if ignoreErrors {
+					fmt.Fprintf(os.Stderr, "command value conversion error for %s: %v (ignored)\n", invocation.OID, convErr)
+					continue
 				}
-				protoValue = converted
+				return lastStatus, fmt.Errorf("command %s value: %w", invocation.OID, convErr)
 			}
 		}
 
-		err := r.client.ExecuteCommand(ctx, slotNum, oid, protoValue)
-		if err != nil {
+		if execErr := r.client.ExecuteCommand(ctx, slotNum, invocation.OID, protoValue); execErr != nil {
 			if ignoreErrors {
-				// Log but continue on error (useful for shutdown commands)
-				fmt.Fprintf(os.Stderr, "command %s: %v (ignored)\n", oid, err)
-			} else {
-				return fmt.Errorf("slot %d command %s: %w", slotNum, oid, err)
+				fmt.Fprintf(os.Stderr, "command %s: %v (ignored)\n", invocation.OID, execErr)
+				continue
+			}
+			return lastStatus, fmt.Errorf("slot %d command %s: %w", slotNum, invocation.OID, execErr)
+		}
+
+		if invocation.StatusFoid != "" {
+			if pollErr := r.pollStatusValue(ctx, slotNum, invocation.StatusFoid, invocation.StatusSuccessComparator, invocation.StatusSuccessValue, invocation.TimeoutSeconds); pollErr != nil {
+				if ignoreErrors {
+					fmt.Fprintf(os.Stderr, "command %s status poll failed: %v (ignored)\n", invocation.OID, pollErr)
+					continue
+				}
+				return lastStatus, pollErr
+			}
+			if raw, getErr := r.client.GetRawValue(ctx, slotNum, invocation.StatusFoid); getErr == nil {
+				lastStatus = protoValueToString(raw)
 			}
 		}
 	}
 
-	// Status polling.
-	if block.StatusFoid.IsNull() || block.StatusFoid.ValueString() == "" {
-		return nil
-	}
-	foid := block.StatusFoid.ValueString()
-	target := ""
-	if !block.StatusSuccessValue.IsNull() {
-		target = block.StatusSuccessValue.ValueString()
-	}
-	comparator := "eq"
-	if !block.StatusSuccessComparator.IsNull() && block.StatusSuccessComparator.ValueString() != "" {
-		comparator = block.StatusSuccessComparator.ValueString()
-	}
-	timeoutSecs := int64(30)
-	if !block.TimeoutSeconds.IsNull() {
-		timeoutSecs = block.TimeoutSeconds.ValueInt64()
-	}
-	return r.pollStatusValue(ctx, slotNum, foid, comparator, target, timeoutSecs)
+	return lastStatus, nil
 }
+
+func (r *deviceResource) commandInvocationFromAttr(value attr.Value) (commandInvocation, error) {
+	invocation := commandInvocation{
+		StatusSuccessComparator: "eq",
+		TimeoutSeconds:          5,
+	}
+
+	if v, ok := value.(types.String); ok {
+		invocation.OID = strings.TrimSpace(v.ValueString())
+		if invocation.OID == "" {
+			return invocation, fmt.Errorf("empty command oid")
+		}
+		return invocation, nil
+	}
+
+	fields, err := r.attrMap(value)
+	if err != nil {
+		return invocation, fmt.Errorf("command entry must be a string or object: %w", err)
+	}
+
+	if s, ok := attrToString(fields["command"]); ok && strings.TrimSpace(s) != "" {
+		invocation.OID = s
+	}
+
+	if invocation.OID == "" {
+		return invocation, fmt.Errorf("command object is missing command")
+	}
+
+	if v, ok := fields["value"]; ok {
+		invocation.Value = v
+	}
+
+	if s, ok := attrToString(fields["status_foid"]); ok {
+		invocation.StatusFoid = s
+	}
+	if s, ok := attrToString(fields["status_success_value"]); ok {
+		invocation.StatusSuccessValue = s
+	}
+	if s, ok := attrToString(fields["status_success_comparator"]); ok && s != "" {
+		invocation.StatusSuccessComparator = s
+	}
+	if n, ok := attrToInt64(fields["timeout_seconds"]); ok && n > 0 {
+		invocation.TimeoutSeconds = n
+	}
+
+	return invocation, nil
+}
+
+func attrToString(value attr.Value) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	switch v := value.(type) {
+	case types.String:
+		if v.IsNull() || v.IsUnknown() {
+			return "", false
+		}
+		return v.ValueString(), true
+	case types.Dynamic:
+		if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+			return "", false
+		}
+		return attrToString(v.UnderlyingValue())
+	default:
+		return "", false
+	}
+}
+
+func attrToInt64(value attr.Value) (int64, bool) {
+	if value == nil {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case types.Int64:
+		if v.IsNull() || v.IsUnknown() {
+			return 0, false
+		}
+		return v.ValueInt64(), true
+	case types.Number:
+		if v.IsNull() || v.IsUnknown() || v.ValueBigFloat() == nil {
+			return 0, false
+		}
+		n, _ := v.ValueBigFloat().Int64()
+		return n, true
+	case types.Dynamic:
+		if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+			return 0, false
+		}
+		return attrToInt64(v.UnderlyingValue())
+	default:
+		return 0, false
+	}
+}
+
+// Legacy single-block helpers (startup_command/shutdown_command) were removed
+// from active schema because current examples use startup_commands/shutdown_commands.
 
 // pollStatusValue polls the given foid every 500ms until the comparator condition is met or timeout.
 func (r *deviceResource) pollStatusValue(ctx context.Context, slotNum uint32, foid, comparator, target string, timeoutSecs int64) error {
@@ -719,7 +800,7 @@ func (r *deviceResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.ID = types.StringValue("catena-" + plan.Name.ValueString())
 
 	if plan.SlotID.IsNull() || plan.SlotID.IsUnknown() {
-		resp.Diagnostics.AddError("invalid slot", "slot must be set for catena_device")
+		resp.Diagnostics.AddError("invalid slot", "slot must be set for st2138_device")
 		return
 	}
 	slotNum := uint32(plan.SlotID.ValueInt64())
@@ -737,10 +818,12 @@ func (r *deviceResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 	}
 
-	if err := r.runCommandBlock(ctx, slotNum, plan.StartupCommand, false); err != nil {
-		resp.Diagnostics.AddError("startup_command failed", err.Error())
+	statusValue, err := r.runCommandRefsBlock(ctx, slotNum, plan.StartupCommands, false)
+	if err != nil {
+		resp.Diagnostics.AddError("startup_commands failed", err.Error())
 		return
 	}
+	plan.StatusValue = types.StringValue(statusValue)
 
 	paramsMap, fullParamsMap, commandsMap, err := r.buildSnapshotMaps(ctx, slotNum)
 	if err != nil {
@@ -750,6 +833,9 @@ func (r *deviceResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.ParametersOut = paramsMap
 	plan.FullParametersOut = fullParamsMap
 	plan.CommandsOut = commandsMap
+	if plan.StatusValue.IsNull() {
+		plan.StatusValue = types.StringValue("")
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -767,7 +853,7 @@ func (r *deviceResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	if state.SlotID.IsNull() || state.SlotID.IsUnknown() {
-		resp.Diagnostics.AddError("invalid slot", "slot must be set for catena_device")
+		resp.Diagnostics.AddError("invalid slot", "slot must be set for st2138_device")
 		return
 	}
 	slotNum := uint32(state.SlotID.ValueInt64())
@@ -785,6 +871,9 @@ func (r *deviceResource) Read(ctx context.Context, req resource.ReadRequest, res
 	state.ParametersOut = paramsMap
 	state.FullParametersOut = fullParamsMap
 	state.CommandsOut = commandsMap
+	if state.StatusValue.IsNull() {
+		state.StatusValue = types.StringValue("")
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -812,7 +901,7 @@ func (r *deviceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	if plan.SlotID.IsNull() || plan.SlotID.IsUnknown() {
-		resp.Diagnostics.AddError("invalid slot", "slot must be set for catena_device")
+		resp.Diagnostics.AddError("invalid slot", "slot must be set for st2138_device")
 		return
 	}
 	slotNum := uint32(plan.SlotID.ValueInt64())
@@ -840,6 +929,9 @@ func (r *deviceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	plan.ParametersOut = paramsMap
 	plan.FullParametersOut = fullParamsMap
 	plan.CommandsOut = commandsMap
+	if plan.StatusValue.IsNull() {
+		plan.StatusValue = types.StringValue("")
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -851,14 +943,14 @@ func (r *deviceResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	if state.ShutdownCommand != nil {
+	if state.ShutdownCommands != nil {
 		resp.Diagnostics.Append(r.configureClient(state.Network)...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
 		slotNum := uint32(state.SlotID.ValueInt64())
-		if err := r.runCommandBlock(ctx, slotNum, state.ShutdownCommand, true); err != nil {
-			resp.Diagnostics.AddWarning("shutdown_command warning", fmt.Sprintf("shutdown command encountered issues: %v (continuing with destroy)", err))
+		if _, err := r.runCommandRefsBlock(ctx, slotNum, state.ShutdownCommands, true); err != nil {
+			resp.Diagnostics.AddWarning("shutdown_commands warning", fmt.Sprintf("shutdown command encountered issues: %v (continuing with destroy)", err))
 		}
 	}
 	// Remove from Terraform state only; no further gRPC calls needed.
