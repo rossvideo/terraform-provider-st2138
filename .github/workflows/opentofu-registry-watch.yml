@@ -1,0 +1,263 @@
+name: OpenTofu Registry Watch
+
+on:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to track (for manual backfill), e.g. v0.1.0'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: opentofu-registry-watch
+  cancel-in-progress: false
+
+jobs:
+  seed_tracker:
+    name: Seed Tracker
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update tracker issue
+        uses: actions/github-script@v7
+        env:
+          DEFAULT_PROVIDER: rossvideo/st2138
+          INPUT_TAG: ${{ inputs.tag }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const eventName = context.eventName;
+            const tagFromPush = context.ref?.replace('refs/tags/', '');
+            const tagFromInput = (process.env.INPUT_TAG || '').trim();
+            const tag = tagFromInput || tagFromPush;
+
+            if (!tag) {
+              core.setFailed('No tag found. Provide inputs.tag when using workflow_dispatch.');
+              return;
+            }
+
+            const now = new Date().toISOString();
+            const provider = process.env.DEFAULT_PROVIDER;
+            const title = `OpenTofu registry publish tracker: ${tag}`;
+
+            const issueList = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            const existing = issueList.find((i) => i.title === title);
+
+            const state = {
+              tag,
+              provider,
+              releaseTime: now,
+              stage: 'waiting_generate',
+              generateRunId: null,
+              generateRunUrl: null,
+              generateRunCreatedAt: null,
+              bumpRunId: null,
+              bumpRunUrl: null,
+              bumpRunCreatedAt: null
+            };
+
+            const body = [
+              'This issue tracks the OpenTofu registry processing pipeline for a provider release.',
+              '',
+              `Provider: ${provider}`,
+              `Tag: ${tag}`,
+              `Release detected at (UTC): ${now}`,
+              '',
+              'Stage: waiting_generate',
+              '',
+              '<!-- opentofu-registry-tracker-state',
+              JSON.stringify(state),
+              '-->'
+            ].join('\n');
+
+            if (existing) {
+              core.info(`Tracker already exists: #${existing.number}`);
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body: `Re-check requested for ${tag} at ${now}.`
+              });
+              return;
+            }
+
+            const created = await github.rest.issues.create({
+              owner,
+              repo,
+              title,
+              body
+            });
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: created.data.number,
+              body: [
+                `Tracking started for ${provider} ${tag}.`,
+                '',
+                'I will comment here when these OpenTofu workflows run:',
+                '- generate-and-deploy-recent.yml',
+                '- bump-versions.yml'
+              ].join('\n')
+            });
+
+  check_trackers:
+    name: Check Trackers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Advance tracker state from OpenTofu registry workflow runs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const trackerHeader = '<!-- opentofu-registry-tracker-state';
+
+            function parseStateFromBody(body) {
+              const start = body.indexOf(trackerHeader);
+              if (start === -1) return null;
+              const jsonStart = start + trackerHeader.length;
+              const end = body.indexOf('-->', jsonStart);
+              if (end === -1) return null;
+              const json = body.slice(jsonStart, end).trim();
+              try {
+                return JSON.parse(json);
+              } catch {
+                return null;
+              }
+            }
+
+            function buildBody(state) {
+              return [
+                'This issue tracks the OpenTofu registry processing pipeline for a provider release.',
+                '',
+                `Provider: ${state.provider}`,
+                `Tag: ${state.tag}`,
+                `Release detected at (UTC): ${state.releaseTime}`,
+                '',
+                `Stage: ${state.stage}`,
+                `Generate run: ${state.generateRunUrl || 'pending'}`,
+                `Bump run: ${state.bumpRunUrl || 'pending'}`,
+                '',
+                '<!-- opentofu-registry-tracker-state',
+                JSON.stringify(state),
+                '-->'
+              ].join('\n');
+            }
+
+            async function getNextRun(workflowId, sinceIso) {
+              const since = new Date(sinceIso).getTime();
+              const resp = await github.request('GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs', {
+                owner: 'opentofu',
+                repo: 'registry',
+                workflow_id: workflowId,
+                per_page: 100
+              });
+
+              const runs = (resp.data.workflow_runs || [])
+                .filter((r) => new Date(r.created_at).getTime() >= since)
+                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+              return runs[0] || null;
+            }
+
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            const trackers = openIssues.filter((i) => i.title.startsWith('OpenTofu registry publish tracker: '));
+
+            if (trackers.length === 0) {
+              core.info('No open tracker issues found.');
+              return;
+            }
+
+            for (const issue of trackers) {
+              const state = parseStateFromBody(issue.body || '');
+              if (!state) {
+                core.warning(`Issue #${issue.number} has no valid tracker state; skipping.`);
+                continue;
+              }
+
+              let changed = false;
+
+              if (state.stage === 'waiting_generate') {
+                const run = await getNextRun('generate-and-deploy-recent.yml', state.releaseTime);
+                if (run) {
+                  state.generateRunId = run.id;
+                  state.generateRunUrl = run.html_url;
+                  state.generateRunCreatedAt = run.created_at;
+                  state.stage = 'waiting_bump';
+                  changed = true;
+
+                  await github.rest.issues.createComment({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    body: [
+                      `Observed OpenTofu run: generate-and-deploy-recent.yml`,
+                      `- Created at (UTC): ${run.created_at}`,
+                      `- Status: ${run.status}`,
+                      `- Conclusion: ${run.conclusion || 'n/a'}`,
+                      `- Link: ${run.html_url}`
+                    ].join('\n')
+                  });
+                }
+              }
+
+              if (state.stage === 'waiting_bump' && state.generateRunCreatedAt) {
+                const run = await getNextRun('bump-versions.yml', state.generateRunCreatedAt);
+                if (run) {
+                  state.bumpRunId = run.id;
+                  state.bumpRunUrl = run.html_url;
+                  state.bumpRunCreatedAt = run.created_at;
+                  state.stage = 'done';
+                  changed = true;
+
+                  await github.rest.issues.createComment({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    body: [
+                      `Observed OpenTofu run: bump-versions.yml`,
+                      `- Created at (UTC): ${run.created_at}`,
+                      `- Status: ${run.status}`,
+                      `- Conclusion: ${run.conclusion || 'n/a'}`,
+                      `- Link: ${run.html_url}`,
+                      '',
+                      'Tracking complete for this tag. Closing issue.'
+                    ].join('\n')
+                  });
+                }
+              }
+
+              if (changed) {
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: buildBody(state),
+                  state: state.stage === 'done' ? 'closed' : 'open'
+                });
+              }
+            }
