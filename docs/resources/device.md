@@ -44,7 +44,7 @@ resource "st2138_device" "one_of_everything" {
 }
 ```
 
-See full working example in [examples/catena-test/main.tf](examples/catena-test/main.tf).
+See full working example in [examples/catena-test/main.tf](https://github.com/rossvideo/terraform-provider-st2138/blob/main/examples/catena-test/main.tf).
 
 ## Argument Reference
 

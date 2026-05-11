@@ -70,8 +70,7 @@ The current `st2138_device` schema supports:
 
 The most up-to-date end-to-end example is:
 
-- [examples/catena-test/main.tf](examples/catena-test/main.tf)
-- [examples/catena-test/README.md](examples/catena-test/README.md)
+- [examples/catena-test/main.tf](https://github.com/rossvideo/terraform-provider-st2138/blob/main/examples/catena-test/main.tf)
 
 That example demonstrates:
 
@@ -86,16 +85,3 @@ That example demonstrates:
 - The provider reads/writes values via gRPC and retries parameter set operations for transient failures.
 - `override_param_values_on_update = false` means parameter values are applied on create and not force-reapplied on every update.
 
-## Local Development
-
-During local provider development (before registry release propagation), use the local
-development workflow documented in the catena example:
-
-- [examples/catena-test/dev.tfrc](examples/catena-test/dev.tfrc)
-- [examples/catena-test/README.md](examples/catena-test/README.md)
-
-## Repository Links
-
-- Provider implementation: [internal/provider/provider.go](internal/provider/provider.go)
-- Device resource implementation: [internal/services/device/resource.go](internal/services/device/resource.go)
-- Examples index: [examples/README.md](examples/README.md)
