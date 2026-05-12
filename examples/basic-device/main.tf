@@ -28,7 +28,7 @@ resource "st2138_device" "basic" {
   network {
     address   = "localhost"
     port      = 6254
-    transport = "grpc"
+    transport = "rest"
     tls       = false
   }
   override_param_values_on_update = false

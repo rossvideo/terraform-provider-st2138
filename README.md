@@ -5,7 +5,9 @@ A Terraform provider for managing Catena devices and services compatible with SM
 ## Features
 
 - **Device Management**: Create, read, update, and delete Catena devices
+- **Dual Transport Support**: Manage devices via both gRPC and REST/HTTP endpoints
 - **Remote gRPC Support**: Manage remote devices via gRPC endpoints
+- **REST/HTTP Support**: Access devices through REST API endpoints with streaming
 - **Parameter Configuration**: Set device parameters via OID-based configuration
 - **Device Status Monitoring**: Poll device status and wait for readiness conditions
 - **Container Support**: Docker-based device deployment (experimental)
@@ -42,18 +44,30 @@ go build -o terraform-provider-st2138
 Provider configuration example:
 
 ```hcl
+# gRPC transport (default)
 provider "catena" {
   endpoint       = "localhost:6254"  # gRPC service endpoint
-  transport      = "grpc"            # Transport protocol (grpc, http)
+  transport      = "grpc"            # Transport protocol: grpc, http, https, rest
   devices_dir    = "../devices"      # Directory containing device definitions
   executables_dir = "../devices"     # Alias for devices_dir
+}
+
+# REST/HTTP transport
+provider "catena" {
+  endpoint       = "http://device.example.com:443"  # REST API endpoint
+  transport      = "http"                            # Transport protocol: http, https, rest
+  devices_dir    = "../devices"
 }
 ```
 
 ### Provider Arguments
 
-- `endpoint` (Optional) - Service endpoint in `host:port` format
-- `transport` (Optional) - Transport protocol, e.g., `grpc`, `http`
+- `endpoint` (Optional) - Service endpoint in `host:port` or `scheme://host:port` format
+- `transport` (Optional) - Transport protocol:
+  - `grpc` (default) - Binary gRPC protocol
+  - `http` - REST API over HTTP
+  - `https` - REST API over HTTPS (TLS-secured)
+  - `rest` - Auto-detect HTTP/HTTPS from endpoint scheme
 - `devices_dir` (Optional) - Base directory for device-type files
 - `executables_dir` (Optional) - Alias for `devices_dir`
 

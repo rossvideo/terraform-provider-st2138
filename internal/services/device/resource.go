@@ -167,7 +167,7 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Reusable command refs to run after Create.",
 				Attributes: map[string]schema.Attribute{
 					"commands": schema.DynamicAttribute{
-						Required:    true,
+						Optional:    true,
 						Description: "List of st2138_command resources, command objects, or command OID strings.",
 					},
 				},
@@ -176,7 +176,7 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Reusable command refs to run during Delete.",
 				Attributes: map[string]schema.Attribute{
 					"commands": schema.DynamicAttribute{
-						Required:    true,
+						Optional:    true,
 						Description: "List of st2138_command resources, command objects, or command OID strings.",
 					},
 				},
@@ -240,7 +240,32 @@ func (r *deviceResource) parseParameters(params types.Dynamic) (map[string]attr.
 	}
 
 	if directMap, err := r.attrMap(params.UnderlyingValue()); err == nil {
+		if nested, ok := directMap["parameters"]; ok {
+			if nestedMap, nestedErr := r.attrMap(nested); nestedErr == nil {
+				for oid, v := range nestedMap {
+					result[oid] = v
+				}
+				return result, diags
+			}
+			if nestedEntries, nestedSeqErr := r.attrSequence(nested); nestedSeqErr == nil {
+				for _, entry := range nestedEntries {
+					paramMap, mapErr := r.attrMap(entry)
+					if mapErr != nil {
+						diags.AddError("invalid parameter object", mapErr.Error())
+						return result, diags
+					}
+					for oid, valAttr := range paramMap {
+						result[oid] = valAttr
+					}
+				}
+				return result, diags
+			}
+		}
 		for oid, v := range directMap {
+			// Ignore metadata keys when a parameter resource object is passed directly.
+			if oid == "id" || oid == "parameters_file" {
+				continue
+			}
 			result[oid] = v
 		}
 		return result, diags
@@ -270,8 +295,20 @@ func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oi
 	for oid, rawValue := range oidValues {
 		descriptor, err := r.client.GetParamDescriptor(ctx, slotNum, oid)
 		if err != nil {
-			diags.AddError("gRPC GetParam failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			if strings.Contains(err.Error(), "status 404") {
+				diags.AddWarning(
+					"Skipping unknown parameter OID",
+					fmt.Sprintf("slot %d oid %q is not present on this device (GetParam returned 404); skipping it.", slotNum, oid),
+				)
+				continue
+			}
+			diags.AddError("GetParam failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
 			return
+		}
+		// Skip read-only parameters — the device owns their values.
+		if descriptor != nil && descriptor.GetReadOnly() {
+			diags.AddWarning("skipping read-only parameter", fmt.Sprintf("slot %d oid %s is read-only and will not be set", slotNum, oid))
+			continue
 		}
 		protoValue, err := r.attrValueToProtoValue(rawValue, descriptor)
 		if err != nil {
@@ -279,7 +316,12 @@ func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oi
 			return
 		}
 		if err := r.setRawValueWithRetry(ctx, slotNum, oid, protoValue); err != nil {
-			diags.AddError("gRPC SetValue failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			// A 400 response means the parameter is read-only or invalid on this device; skip it.
+			if strings.Contains(err.Error(), "status 400") {
+				diags.AddWarning("skipping unwritable parameter", fmt.Sprintf("slot %d oid %s returned 400 (read-only or not applicable)", slotNum, oid))
+				continue
+			}
+			diags.AddError("SetValue failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
 			return
 		}
 	}
@@ -833,7 +875,7 @@ func (r *deviceResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.ParametersOut = paramsMap
 	plan.FullParametersOut = fullParamsMap
 	plan.CommandsOut = commandsMap
-	if plan.StatusValue.IsNull() {
+	if plan.StatusValue.IsNull() || plan.StatusValue.IsUnknown() {
 		plan.StatusValue = types.StringValue("")
 	}
 
@@ -871,7 +913,7 @@ func (r *deviceResource) Read(ctx context.Context, req resource.ReadRequest, res
 	state.ParametersOut = paramsMap
 	state.FullParametersOut = fullParamsMap
 	state.CommandsOut = commandsMap
-	if state.StatusValue.IsNull() {
+	if state.StatusValue.IsNull() || state.StatusValue.IsUnknown() {
 		state.StatusValue = types.StringValue("")
 	}
 
@@ -929,7 +971,7 @@ func (r *deviceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	plan.ParametersOut = paramsMap
 	plan.FullParametersOut = fullParamsMap
 	plan.CommandsOut = commandsMap
-	if plan.StatusValue.IsNull() {
+	if plan.StatusValue.IsNull() || plan.StatusValue.IsUnknown() {
 		plan.StatusValue = types.StringValue("")
 	}
 
@@ -1094,6 +1136,10 @@ func (r *deviceResource) setRawValueWithRetry(ctx context.Context, slot uint32, 
 			return nil
 		} else {
 			lastErr = err
+			// Don't retry on 400 — the parameter is read-only or the request is invalid.
+			if strings.Contains(err.Error(), "status 400") {
+				return lastErr
+			}
 		}
 		time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
 	}

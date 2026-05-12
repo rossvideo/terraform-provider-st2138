@@ -15,44 +15,58 @@ import (
 // Update: Modifies existing params on device
 // Delete: Removes params from device
 
-// SetParams sets a subset of well-known params via gRPC when available.
+// SetParams sets a subset of well-known params via transport when available.
 // Currently supports setting string params like selected_flow_id if present.
+// Supports both gRPC and HTTP transports.
 func (c *Client) SetParams(ctx context.Context, dyn types.Dynamic) error {
-	if err := c.ensureConn(ctx); err != nil {
-		return err
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := c.ensureConn(ctx); err != nil {
+			return err
+		}
 	}
 	// No generic decoding implemented yet; use resource-level helpers to set values.
 	return nil
 }
 
 // SetStringValue performs GetParam then SetValue for a string OID.
+// Supports both gRPC and HTTP transports.
 func (c *Client) SetStringValue(ctx context.Context, slot uint32, oid string, value string) error {
-	if err := c.ensureConn(ctx); err != nil {
-		return err
-	}
-	// Use the provided slot as-is; caller is responsible for correctness
 	// Normalize OID: ensure it starts with '/'
 	roid := oid
 	if !strings.HasPrefix(roid, "/") {
 		roid = "/" + roid
 	}
 
+	val := &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: value}}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return err
+		}
+		return c.httpClient.SetValue(ctx, slot, roid, val)
+	}
+
+	// Use gRPC transport (default)
+	if err := c.ensureConn(ctx); err != nil {
+		return err
+	}
+
 	req := &st2138pb.SingleSetValuePayload{
-		Slot: slot,
-		Value: &st2138pb.SetValuePayload{
-			Oid:   roid,
-			Value: &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: value}},
-		},
+		Slot:  slot,
+		Value: &st2138pb.SetValuePayload{Oid: roid, Value: val},
 	}
 	_, err := c.rpcClient.SetValue(ctx, req)
 	return err
 }
 
 // SetNumberValue sets a numeric param; prefers int32 when value is integral and in range, else float32.
+// Supports both gRPC and HTTP transports.
 func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n float64) error {
-	if err := c.ensureConn(ctx); err != nil {
-		return err
-	}
 	roid := oid
 	if !strings.HasPrefix(roid, "/") {
 		roid = "/" + roid
@@ -64,6 +78,20 @@ func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n 
 	} else {
 		val = &st2138pb.Value{Kind: &st2138pb.Value_Float32Value{Float32Value: float32(n)}}
 	}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return err
+		}
+		return c.httpClient.SetValue(ctx, slot, roid, val)
+	}
+
+	// Use gRPC transport (default)
+	if err := c.ensureConn(ctx); err != nil {
+		return err
+	}
+
 	req := &st2138pb.SingleSetValuePayload{
 		Slot:  slot,
 		Value: &st2138pb.SetValuePayload{Oid: roid, Value: val},
@@ -73,14 +101,26 @@ func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n 
 }
 
 // SetRawValue sends a fully-formed Catena value payload for the given OID.
+// Supports both gRPC and HTTP transports.
 func (c *Client) SetRawValue(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
-	if err := c.ensureConn(ctx); err != nil {
-		return err
-	}
 	roid := oid
 	if !strings.HasPrefix(roid, "/") {
 		roid = "/" + roid
 	}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return err
+		}
+		return c.httpClient.SetValue(ctx, slot, roid, value)
+	}
+
+	// Use gRPC transport (default)
+	if err := c.ensureConn(ctx); err != nil {
+		return err
+	}
+
 	req := &st2138pb.SingleSetValuePayload{
 		Slot:  slot,
 		Value: &st2138pb.SetValuePayload{Oid: roid, Value: value},
@@ -90,13 +130,24 @@ func (c *Client) SetRawValue(ctx context.Context, slot uint32, oid string, value
 }
 
 // GetParamDescriptor fetches the parameter descriptor for an OID.
+// Supports both gRPC and HTTP transports.
 func (c *Client) GetParamDescriptor(ctx context.Context, slot uint32, oid string) (*st2138pb.Param, error) {
-	if err := c.ensureConn(ctx); err != nil {
-		return nil, err
-	}
 	roid := oid
 	if !strings.HasPrefix(roid, "/") {
 		roid = "/" + roid
+	}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return nil, err
+		}
+		return c.httpClient.GetParam(ctx, slot, roid)
+	}
+
+	// Use gRPC transport (default)
+	if err := c.ensureConn(ctx); err != nil {
+		return nil, err
 	}
 	resp, err := c.rpcClient.GetParam(ctx, &st2138pb.GetParamPayload{Slot: slot, Oid: roid})
 	if err != nil {
@@ -107,13 +158,41 @@ func (c *Client) GetParamDescriptor(ctx context.Context, slot uint32, oid string
 
 // ExecuteCommand invokes a device command and drains the streaming response.
 // value may be nil if the command takes no parameter.
+// Supports both gRPC and HTTP transports.
 func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
-	if err := c.ensureConn(ctx); err != nil {
-		return err
-	}
 	roid := oid
 	if !strings.HasPrefix(roid, "/") {
 		roid = "/" + roid
+	}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return err
+		}
+		stream, err := c.httpClient.ExecuteCommand(ctx, slot, roid, value, true)
+		if err != nil {
+			return fmt.Errorf("ExecuteCommand %s: %w", oid, err)
+		}
+		defer stream.Close()
+		for {
+			resp, recvErr := stream.RecvCommandResponse()
+			if recvErr != nil {
+				if recvErr.Error() == "EOF" {
+					break
+				}
+				break
+			}
+			if ex := resp.GetException(); ex != nil {
+				return fmt.Errorf("command %s exception: %s", oid, ex.GetDetails())
+			}
+		}
+		return nil
+	}
+
+	// Use gRPC transport (default)
+	if err := c.ensureConn(ctx); err != nil {
+		return err
 	}
 	stream, err := c.rpcClient.ExecuteCommand(ctx, &st2138pb.ExecuteCommandPayload{
 		Slot:    slot,
@@ -127,11 +206,9 @@ func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, va
 	for {
 		resp, recvErr := stream.Recv()
 		if recvErr != nil {
-			// io.EOF signals the stream is done cleanly
 			if recvErr.Error() == "EOF" {
 				break
 			}
-			// Check for io.EOF via string since the import may not be available
 			break
 		}
 		if ex := resp.GetException(); ex != nil {
@@ -142,13 +219,24 @@ func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, va
 }
 
 // GetRawValue fetches the current proto Value for the given OID.
+// Supports both gRPC and HTTP transports.
 func (c *Client) GetRawValue(ctx context.Context, slot uint32, oid string) (*st2138pb.Value, error) {
-	if err := c.ensureConn(ctx); err != nil {
-		return nil, err
-	}
 	roid := oid
 	if !strings.HasPrefix(roid, "/") {
 		roid = "/" + roid
+	}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return nil, err
+		}
+		return c.httpClient.GetValue(ctx, slot, roid)
+	}
+
+	// Use gRPC transport (default)
+	if err := c.ensureConn(ctx); err != nil {
+		return nil, err
 	}
 	return c.rpcClient.GetValue(ctx, &st2138pb.GetValuePayload{Slot: slot, Oid: roid})
 }

@@ -14,14 +14,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Client carries provider configuration and, when transport is grpc, a lazily-dialed connection.
+// Client carries provider configuration and lazily-dialed connections for both gRPC and HTTP transports.
 type Client struct {
 	Endpoint   string
 	Transport  string
 	DevicesDir string
 
-	conn      *grpc.ClientConn
-	rpcClient st2138pb.CatenaServiceClient
+	conn       *grpc.ClientConn
+	rpcClient  st2138pb.CatenaServiceClient
+	httpClient *HTTPClient
 }
 
 // Close releases any underlying connections.
@@ -30,6 +31,10 @@ func (c *Client) Close() {
 		_ = c.conn.Close()
 		c.conn = nil
 		c.rpcClient = nil
+	}
+	if c.httpClient != nil {
+		_ = c.httpClient.Close()
+		c.httpClient = nil
 	}
 }
 
@@ -42,6 +47,7 @@ func (c *Client) Clone() *Client {
 		DevicesDir: c.DevicesDir,
 		conn:       nil,
 		rpcClient:  nil,
+		httpClient: nil,
 	}
 }
 
@@ -104,5 +110,39 @@ func (c *Client) ensureConn(ctx context.Context) error {
 	}
 	c.conn = conn
 	c.rpcClient = st2138pb.NewCatenaServiceClient(conn)
+	return nil
+}
+
+// ensureHTTPConn establishes an HTTP client connection.
+func (c *Client) ensureHTTPConn(ctx context.Context) error {
+	if c.Transport != "http" && c.Transport != "https" && c.Transport != "rest" {
+		return fmt.Errorf("transport %q is not http", c.Transport)
+	}
+	if c.httpClient != nil {
+		return nil
+	}
+
+	// Normalize transport: map "rest" to "http" or "https" based on endpoint
+	transport := c.Transport
+	if transport == "rest" {
+		if strings.Contains(c.Endpoint, "https://") {
+			transport = "https"
+		} else {
+			transport = "http"
+		}
+	}
+
+	// If endpoint doesn't have scheme, add it
+	endpoint := c.Endpoint
+	if !strings.Contains(endpoint, "://") {
+		endpoint = transport + "://" + endpoint
+	}
+
+	httpClient, err := NewHTTPClient(endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+
+	c.httpClient = httpClient
 	return nil
 }

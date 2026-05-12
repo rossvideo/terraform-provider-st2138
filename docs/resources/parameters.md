@@ -34,7 +34,7 @@ resource "st2138_parameters" "ooe_params_file" {
 ### Optional
 
 - `parameters` (Dynamic): Parameter payload expressed as an object or list of objects.
-- `parameters_file` (String): Path to a parameter file for bulk loading.
+- `parameters_file` (String): Path to a tofu value file holding the paramters for bulk loading.
 
 Constraint: At least one of `parameters` or `parameters_file` must be provided.
 

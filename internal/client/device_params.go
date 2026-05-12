@@ -18,7 +18,65 @@ type DeviceSnapshot struct {
 
 // GetDeviceSnapshot calls DeviceRequest for the given slot and collects
 // writable parameters, all parameters, and commands from the streamed response.
+// Supports both gRPC and HTTP transports.
 func (c *Client) GetDeviceSnapshot(ctx context.Context, slot uint32) (*DeviceSnapshot, error) {
+	result := &DeviceSnapshot{
+		Parameters:     make(map[string]string),
+		FullParameters: make(map[string]string),
+		Commands:       make(map[string]string),
+	}
+
+	// Use HTTP transport if configured
+	if c.Transport == "http" || c.Transport == "https" || c.Transport == "rest" {
+		if err := c.ensureHTTPConn(ctx); err != nil {
+			return nil, err
+		}
+
+		stream, err := c.httpClient.DeviceRequest(ctx, slot)
+		if err != nil {
+			return nil, err
+		}
+		defer stream.Close()
+
+		for {
+			comp, recvErr := stream.Recv()
+			if recvErr == io.EOF {
+				break
+			}
+			if recvErr != nil {
+				return result, recvErr
+			}
+
+			if dev := comp.GetDevice(); dev != nil {
+				for foid, param := range dev.GetParams() {
+					value := stringifyValue(param.GetValue())
+					result.FullParameters[foid] = value
+					if !param.GetReadOnly() {
+						result.Parameters[foid] = value
+					}
+				}
+				for foid, cmd := range dev.GetCommands() {
+					result.Commands[foid] = stringifyValue(cmd.GetValue())
+				}
+			}
+
+			if cp := comp.GetParam(); cp != nil {
+				value := stringifyValue(cp.GetParam().GetValue())
+				result.FullParameters[cp.Oid] = value
+				if !cp.GetParam().GetReadOnly() {
+					result.Parameters[cp.Oid] = value
+				}
+			}
+
+			if cc := comp.GetCommand(); cc != nil {
+				result.Commands[cc.Oid] = stringifyValue(cc.GetCommand().GetValue())
+			}
+		}
+
+		return result, nil
+	}
+
+	// Use gRPC transport (default)
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
@@ -29,12 +87,6 @@ func (c *Client) GetDeviceSnapshot(ctx context.Context, slot uint32) (*DeviceSna
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	result := &DeviceSnapshot{
-		Parameters:     make(map[string]string),
-		FullParameters: make(map[string]string),
-		Commands:       make(map[string]string),
 	}
 
 	for {
