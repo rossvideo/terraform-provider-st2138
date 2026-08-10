@@ -50,7 +50,7 @@ func TestClient_GetStringValue(t *testing.T) {
 		{
 			name: "string value",
 			slot: 1,
-			oid:  "/test/param",
+			oid:  "test/param",
 			mockValue: &st2138pb.Value{
 				Kind: &st2138pb.Value_StringValue{StringValue: "test-value"},
 			},
@@ -60,7 +60,7 @@ func TestClient_GetStringValue(t *testing.T) {
 		{
 			name: "int32 value",
 			slot: 1,
-			oid:  "/test/number",
+			oid:  "test/number",
 			mockValue: &st2138pb.Value{
 				Kind: &st2138pb.Value_Int32Value{Int32Value: 42},
 			},
@@ -70,7 +70,7 @@ func TestClient_GetStringValue(t *testing.T) {
 		{
 			name: "float32 value",
 			slot: 1,
-			oid:  "/test/float",
+			oid:  "test/float",
 			mockValue: &st2138pb.Value{
 				Kind: &st2138pb.Value_Float32Value{Float32Value: 3.14},
 			},
@@ -122,8 +122,8 @@ func TestClient_SetStringValue(t *testing.T) {
 			if in.Slot != 1 {
 				t.Errorf("Expected slot 1, got %d", in.Slot)
 			}
-			if in.Value.Oid != "/test/param" {
-				t.Errorf("Expected OID /test/param, got %s", in.Value.Oid)
+			if in.Value.Oid != "test/param" {
+				t.Errorf("Expected OID test/param, got %s", in.Value.Oid)
 			}
 			return &st2138pb.Empty{}, nil
 		},
@@ -135,7 +135,7 @@ func TestClient_SetStringValue(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetStringValue(context.Background(), 1, "/test/param", "test-value")
+	err := c.SetStringValue(context.Background(), 1, "test/param", "test-value")
 	if err != nil {
 		t.Errorf("SetStringValue() error = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestClient_SetNumberValue(t *testing.T) {
 				conn:      &grpc.ClientConn{},
 			}
 
-			err := c.SetNumberValue(context.Background(), 1, "/test/number", tt.value)
+			err := c.SetNumberValue(context.Background(), 1, "test/number", tt.value)
 			if err != nil {
 				t.Errorf("SetNumberValue() error = %v", err)
 			}
@@ -218,7 +218,7 @@ func TestClient_WaitReady_Success(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.WaitReady(context.Background(), 1, "/status", "ready", 5*time.Second)
+	err := c.WaitReady(context.Background(), 1, "status", "ready", 5*time.Second)
 	if err != nil {
 		t.Errorf("WaitReady() error = %v", err)
 	}
@@ -250,7 +250,7 @@ func TestClient_WaitNotReady_Success(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.WaitNotReady(context.Background(), 1, "/status", "ready", 5*time.Second)
+	err := c.WaitNotReady(context.Background(), 1, "status", "ready", 5*time.Second)
 	if err != nil {
 		t.Errorf("WaitNotReady() error = %v", err)
 	}
@@ -268,39 +268,11 @@ func TestClient_RunStart(t *testing.T) {
 			if in.Slot != 1 {
 				t.Errorf("Expected slot 1, got %d", in.Slot)
 			}
-			if in.Oid != "/commands/start" {
-				t.Errorf("Expected OID /commands/start, got %s", in.Oid)
+			if in.Oid != "commands/start" {
+				t.Errorf("Expected OID commands/start, got %s", in.Oid)
 			}
 			if in.Respond != false {
 				t.Error("Expected Respond to be false")
-			}
-			return nil, nil
-		},
-	}
-
-	c := &Client{
-		Transport: "grpc",
-		rpcClient: mockClient,
-		conn:      &grpc.ClientConn{},
-	}
-
-	err := c.RunStart(context.Background(), 1, "/commands/start")
-	if err != nil {
-		t.Errorf("RunStart() error = %v", err)
-	}
-	if !executeCalled {
-		t.Error("ExecuteCommand should have been called")
-	}
-}
-
-func TestClient_RunStart_WithoutLeadingSlash(t *testing.T) {
-	executeCalled := false
-	mockClient := &mockCatenaServiceClient{
-		executeCommandFunc: func(ctx context.Context, in *st2138pb.ExecuteCommandPayload, opts ...grpc.CallOption) (st2138pb.CatenaService_ExecuteCommandClient, error) {
-			executeCalled = true
-			// Should normalize OID
-			if in.Oid != "/commands/start" {
-				t.Errorf("Expected normalized OID /commands/start, got %s", in.Oid)
 			}
 			return nil, nil
 		},
@@ -329,8 +301,8 @@ func TestClient_RunStop(t *testing.T) {
 			if in.Slot != 1 {
 				t.Errorf("Expected slot 1, got %d", in.Slot)
 			}
-			if in.Oid != "/commands/stop" {
-				t.Errorf("Expected OID /commands/stop, got %s", in.Oid)
+			if in.Oid != "commands/stop" {
+				t.Errorf("Expected OID commands/stop, got %s", in.Oid)
 			}
 			return nil, nil
 		},
@@ -342,7 +314,7 @@ func TestClient_RunStop(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.RunStop(context.Background(), 1, "/commands/stop")
+	err := c.RunStop(context.Background(), 1, "commands/stop")
 	if err != nil {
 		t.Errorf("RunStop() error = %v", err)
 	}
@@ -354,9 +326,8 @@ func TestClient_RunStop(t *testing.T) {
 func TestClient_SetStringValue_WithoutLeadingSlash(t *testing.T) {
 	mockClient := &mockCatenaServiceClient{
 		setValueFunc: func(ctx context.Context, in *st2138pb.SingleSetValuePayload, opts ...grpc.CallOption) (*st2138pb.Empty, error) {
-			// Should normalize OID
-			if in.Value.Oid != "/test/param" {
-				t.Errorf("Expected normalized OID /test/param, got %s", in.Value.Oid)
+			if in.Value.Oid != "test/param" {
+				t.Errorf("Expected OID test/param, got %s", in.Value.Oid)
 			}
 			return &st2138pb.Empty{}, nil
 		},
@@ -377,8 +348,8 @@ func TestClient_SetStringValue_WithoutLeadingSlash(t *testing.T) {
 func TestClient_SetNumberValue_WithoutLeadingSlash(t *testing.T) {
 	mockClient := &mockCatenaServiceClient{
 		setValueFunc: func(ctx context.Context, in *st2138pb.SingleSetValuePayload, opts ...grpc.CallOption) (*st2138pb.Empty, error) {
-			if in.Value.Oid != "/test/number" {
-				t.Errorf("Expected normalized OID /test/number, got %s", in.Value.Oid)
+			if in.Value.Oid != "test/number" {
+				t.Errorf("Expected OID test/number, got %s", in.Value.Oid)
 			}
 			return &st2138pb.Empty{}, nil
 		},

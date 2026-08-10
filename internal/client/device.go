@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
@@ -15,15 +14,11 @@ import (
 // Delete: Removes device from backend
 
 // RunStart triggers the device start via the SMPTE gRPC API using ExecuteCommand.
-// commandOID should be a fully-qualified OID for the command; leading '/' will be added if missing.
 func (c *Client) RunStart(ctx context.Context, slot uint32, commandOID string) error {
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
 	oid := commandOID
-	if !strings.HasPrefix(oid, "/") {
-		oid = "/" + oid
-	}
 	payload := &st2138pb.ExecuteCommandPayload{
 		Slot:    slot,
 		Oid:     oid,
@@ -41,9 +36,6 @@ func (c *Client) RunStop(ctx context.Context, slot uint32, commandOID string) er
 		return err
 	}
 	oid := commandOID
-	if !strings.HasPrefix(oid, "/") {
-		oid = "/" + oid
-	}
 	payload := &st2138pb.ExecuteCommandPayload{
 		Slot:    slot,
 		Oid:     oid,
@@ -110,11 +102,7 @@ func (c *Client) GetStringValue(ctx context.Context, slot uint32, oid string) (s
 	if err := c.ensureConn(ctx); err != nil {
 		return "", err
 	}
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-	req := &st2138pb.GetValuePayload{Slot: slot, Oid: roid}
+	req := &st2138pb.GetValuePayload{Slot: slot, Oid: oid}
 	val, err := c.rpcClient.GetValue(ctx, req)
 	if err != nil {
 		return "", err

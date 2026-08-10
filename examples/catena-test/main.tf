@@ -17,19 +17,19 @@ terraform {
 provider "st2138" {}
 
 resource "st2138_command" "start_ooe_command" {
-    command                 = "/fib_start"
+    command                 = "fib_start"
     status_foid              = "number_example"
     status_success_comparator = "ne"
     status_success_value     = "0"
     timeout_seconds          = 5
 }
 resource "st2138_command" "stop_ooe_command" {
-    command                 = "/fib_stop"
+    command                 = "fib_stop"
     timeout_seconds          = 5
 }
 
 resource "st2138_command" "set_0_ooe_command" {
-    command                 = "/fib_set"
+    command                 = "fib_set"
     value                   = { int32_value = 0 }
     status_foid              = "number_example"
     status_success_comparator = "eq"

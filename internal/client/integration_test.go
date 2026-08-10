@@ -18,7 +18,7 @@ import (
 // mockServerState maintains state across gRPC calls
 type mockServerState struct {
 	values   map[string]*st2138pb.Value // key: "slot:oid"
-	commands []string                    // track executed commands
+	commands []string                   // track executed commands
 }
 
 type mockIntegrationServer struct {
@@ -48,8 +48,8 @@ func (s *mockIntegrationServer) ExecuteCommand(req *st2138pb.ExecuteCommandPaylo
 	s.state.commands = append(s.state.commands, req.Oid)
 
 	// For commands, set a status value
-	if req.Oid == "/commands/start" {
-		statusKey := fmt.Sprintf("%d:/status/state", req.Slot)
+	if req.Oid == "commands/start" {
+		statusKey := fmt.Sprintf("%d:status/state", req.Slot)
 		s.state.values[statusKey] = &st2138pb.Value{
 			Kind: &st2138pb.Value_StringValue{StringValue: "running"},
 		}
@@ -227,7 +227,7 @@ func TestIntegration_CommandExecution(t *testing.T) {
 	ctx := context.Background()
 
 	// Execute start command
-	err := c.RunStart(ctx, 1, "/commands/start")
+	err := c.RunStart(ctx, 1, "commands/start")
 	if err != nil {
 		t.Fatalf("RunStart() error = %v", err)
 	}
@@ -239,12 +239,12 @@ func TestIntegration_CommandExecution(t *testing.T) {
 	if len(state.commands) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(state.commands))
 	}
-	if state.commands[0] != "/commands/start" {
+	if state.commands[0] != "commands/start" {
 		t.Errorf("Command = %s, want /commands/start", state.commands[0])
 	}
 
 	// Execute stop command
-	err = c.RunStop(ctx, 1, "/commands/stop")
+	err = c.RunStop(ctx, 1, "commands/stop")
 	if err != nil {
 		t.Fatalf("RunStop() error = %v", err)
 	}
@@ -253,50 +253,6 @@ func TestIntegration_CommandExecution(t *testing.T) {
 
 	if len(state.commands) != 2 {
 		t.Fatalf("Expected 2 commands, got %d", len(state.commands))
-	}
-}
-
-// TestIntegration_OIDNormalization tests that OIDs are properly normalized
-func TestIntegration_OIDNormalization(t *testing.T) {
-	endpoint, state, cleanup := setupIntegrationServer(t)
-	defer cleanup()
-
-	c := &client.Client{
-		Endpoint:  endpoint,
-		Transport: "grpc",
-	}
-	defer c.Close()
-
-	ctx := context.Background()
-
-	// Set value with and without leading slash - should be same
-	err := c.SetStringValue(ctx, 1, "config/name", "test1")
-	if err != nil {
-		t.Fatalf("SetStringValue(no slash) error = %v", err)
-	}
-
-	err = c.SetStringValue(ctx, 1, "/config/name", "test2")
-	if err != nil {
-		t.Fatalf("SetStringValue(with slash) error = %v", err)
-	}
-
-	// Both should map to same key
-	key := "1:/config/name"
-	if val, ok := state.values[key]; !ok {
-		t.Error("Value not found")
-	} else if val.GetStringValue() != "test2" {
-		t.Errorf("Value = %s, want test2 (second write should overwrite)", val.GetStringValue())
-	}
-
-	// Should only have one entry
-	count := 0
-	for k := range state.values {
-		if k == "1:/config/name" || k == "1:config/name" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("Found %d entries for config/name, want 1", count)
 	}
 }
 
@@ -319,7 +275,7 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer func() { done <- true }()
 
-			key := fmt.Sprintf("/test/concurrent_%d", id)
+			key := fmt.Sprintf("test/concurrent_%d", id)
 			value := fmt.Sprintf("value_%d", id)
 
 			// Write
@@ -363,7 +319,7 @@ func TestIntegration_ConnectionReuse(t *testing.T) {
 
 	// Make multiple calls - should reuse same connection
 	for i := 0; i < 5; i++ {
-		err := c.SetStringValue(ctx, 1, "/test/reuse", fmt.Sprintf("value%d", i))
+		err := c.SetStringValue(ctx, 1, "test/reuse", fmt.Sprintf("value%d", i))
 		if err != nil {
 			t.Fatalf("Call %d: error = %v", i, err)
 		}
@@ -396,7 +352,7 @@ func TestIntegration_ClientClone(t *testing.T) {
 
 	go func() {
 		defer func() { done <- true }()
-		err := original.SetStringValue(ctx, 1, "/test/original", "from_original")
+		err := original.SetStringValue(ctx, 1, "test/original", "from_original")
 		if err != nil {
 			t.Errorf("Original client error: %v", err)
 		}
@@ -404,7 +360,7 @@ func TestIntegration_ClientClone(t *testing.T) {
 
 	go func() {
 		defer func() { done <- true }()
-		err := clone.SetStringValue(ctx, 2, "/test/clone", "from_clone")
+		err := clone.SetStringValue(ctx, 2, "test/clone", "from_clone")
 		if err != nil {
 			t.Errorf("Clone client error: %v", err)
 		}
@@ -433,20 +389,20 @@ func TestIntegration_WaitReady(t *testing.T) {
 	ctx := context.Background()
 
 	// Set initial state to "starting"
-	state.values["1:/status/state"] = &st2138pb.Value{
+	state.values["1:status/state"] = &st2138pb.Value{
 		Kind: &st2138pb.Value_StringValue{StringValue: "starting"},
 	}
 
 	// Launch goroutine to change state after delay
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		state.values["1:/status/state"] = &st2138pb.Value{
+		state.values["1:status/state"] = &st2138pb.Value{
 			Kind: &st2138pb.Value_StringValue{StringValue: "ready"},
 		}
 	}()
 
 	// Wait for ready state
-	err := c.WaitReady(ctx, 1, "/status/state", "ready", 2*time.Second)
+	err := c.WaitReady(ctx, 1, "status/state", "ready", 2*time.Second)
 	if err != nil {
 		t.Errorf("WaitReady() error = %v", err)
 	}
@@ -466,20 +422,20 @@ func TestIntegration_WaitNotReady(t *testing.T) {
 	ctx := context.Background()
 
 	// Set initial state to "ready"
-	state.values["1:/status/state"] = &st2138pb.Value{
+	state.values["1:status/state"] = &st2138pb.Value{
 		Kind: &st2138pb.Value_StringValue{StringValue: "ready"},
 	}
 
 	// Launch goroutine to change state after delay
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		state.values["1:/status/state"] = &st2138pb.Value{
+		state.values["1:status/state"] = &st2138pb.Value{
 			Kind: &st2138pb.Value_StringValue{StringValue: "stopped"},
 		}
 	}()
 
 	// Wait for not-ready state
-	err := c.WaitNotReady(ctx, 1, "/status/state", "ready", 2*time.Second)
+	err := c.WaitNotReady(ctx, 1, "status/state", "ready", 2*time.Second)
 	if err != nil {
 		t.Errorf("WaitNotReady() error = %v", err)
 	}
@@ -502,7 +458,7 @@ func TestIntegration_EndpointChange(t *testing.T) {
 	ctx := context.Background()
 
 	// Write to first endpoint
-	err := c.SetStringValue(ctx, 1, "/test/value", "endpoint1")
+	err := c.SetStringValue(ctx, 1, "test/value", "endpoint1")
 	if err != nil {
 		t.Fatalf("SetStringValue(endpoint1) error = %v", err)
 	}
@@ -511,13 +467,13 @@ func TestIntegration_EndpointChange(t *testing.T) {
 	c.SetEndpoint(endpoint2)
 
 	// Write to second endpoint
-	err = c.SetStringValue(ctx, 1, "/test/value", "endpoint2")
+	err = c.SetStringValue(ctx, 1, "test/value", "endpoint2")
 	if err != nil {
 		t.Fatalf("SetStringValue(endpoint2) error = %v", err)
 	}
 
 	// Verify second endpoint received the value
-	key := "1:/test/value"
+	key := "1:test/value"
 	if val, ok := state2.values[key]; !ok {
 		t.Error("Value not found on endpoint2")
 	} else if val.GetStringValue() != "endpoint2" {

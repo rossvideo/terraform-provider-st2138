@@ -2,7 +2,6 @@ package params
 
 import (
 	"context"
-	"strings"
 
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 )
@@ -14,17 +13,11 @@ import (
 
 // SetEmptyValue sets an empty/void parameter value via gRPC.
 // This is typically used for trigger commands or reset operations.
-// The OID is normalized to ensure it starts with '/'.
 func SetEmptyValue(ctx context.Context, client st2138pb.CatenaServiceClient, slot uint32, oid string) error {
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-
 	req := &st2138pb.SingleSetValuePayload{
 		Slot: slot,
 		Value: &st2138pb.SetValuePayload{
-			Oid:   roid,
+			Oid:   oid,
 			Value: &st2138pb.Value{Kind: &st2138pb.Value_EmptyValue{EmptyValue: &st2138pb.Empty{}}},
 		},
 	}

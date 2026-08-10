@@ -46,11 +46,11 @@ func TestDeviceModel_UnknownValues(t *testing.T) {
 
 func TestParamPairModel(t *testing.T) {
 	pair := paramPairModel{
-		Oid:   types.StringValue("/test/oid"),
+		Oid:   types.StringValue("test/oid"),
 		Value: types.StringValue("test-value"),
 	}
 
-	if pair.Oid.ValueString() != "/test/oid" {
+	if pair.Oid.ValueString() != "test/oid" {
 		t.Errorf("Oid = %s, want /test/oid", pair.Oid.ValueString())
 	}
 	if pair.Value.ValueString() != "test-value" {
@@ -60,11 +60,11 @@ func TestParamPairModel(t *testing.T) {
 
 func TestDeviceStatusModel(t *testing.T) {
 	status := &deviceStatusModel{
-		Oid:        types.StringValue("/status/ready"),
+		Oid:        types.StringValue("status/ready"),
 		ReadyValue: types.StringValue("true"),
 	}
 
-	if status.Oid.ValueString() != "/status/ready" {
+	if status.Oid.ValueString() != "status/ready" {
 		t.Errorf("Oid = %s, want /status/ready", status.Oid.ValueString())
 	}
 	if status.ReadyValue.ValueString() != "true" {

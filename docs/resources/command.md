@@ -8,18 +8,18 @@ This resource defines a reusable command payload. `st2138_device` can consume th
 
 ```hcl
 resource "st2138_command" "start_ooe_command" {
-    command         = "/fib_start"
+    command         = "fib_start"
     timeout_seconds  = 5
 }
 
 resource "st2138_command" "set_ooe_command_with_value" {
-    command         = "/fib_set"
+    command         = "fib_set"
     value           = 0
     timeout_seconds = 5
 }
 
 resource "st2138_command" "set_ooe_command_check_for_success" {
-    command                   = "/fib_set"
+    command                   = "fib_set"
     value                     = 1
     timeout_seconds           = 5
     status_foid               = "number_example"

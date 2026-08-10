@@ -14,7 +14,7 @@ terraform {
   required_providers {
     st2138 = {
       source  = "rossvideo/st2138"
-      version = "0.1.0"
+      version = "0.1.1"
     }
   }
 }

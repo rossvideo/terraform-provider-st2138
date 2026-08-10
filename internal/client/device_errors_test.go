@@ -32,7 +32,7 @@ func TestClient_WaitReady_ContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := c.WaitReady(ctx, 1, "/status", "ready", 100*time.Millisecond)
+	err := c.WaitReady(ctx, 1, "status", "ready", 100*time.Millisecond)
 	if err == nil {
 		t.Error("WaitReady() should timeout when value never becomes ready")
 	}
@@ -51,7 +51,7 @@ func TestClient_WaitReady_GetValueError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.WaitReady(context.Background(), 1, "/status", "ready", 1*time.Second)
+	err := c.WaitReady(context.Background(), 1, "status", "ready", 1*time.Second)
 	if err == nil {
 		t.Error("WaitReady() should return error when GetValue fails")
 	}
@@ -74,7 +74,7 @@ func TestClient_WaitReady_ImmediatelyReady(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := c.WaitReady(context.Background(), 1, "/status", "ready", 5*time.Second)
+	err := c.WaitReady(context.Background(), 1, "status", "ready", 5*time.Second)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -106,7 +106,7 @@ func TestClient_WaitNotReady_ContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := c.WaitNotReady(ctx, 1, "/status", "ready", 100*time.Millisecond)
+	err := c.WaitNotReady(ctx, 1, "status", "ready", 100*time.Millisecond)
 	if err == nil {
 		t.Error("WaitNotReady() should timeout when value stays ready")
 	}
@@ -125,7 +125,7 @@ func TestClient_WaitNotReady_GetValueError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.WaitNotReady(context.Background(), 1, "/status", "ready", 1*time.Second)
+	err := c.WaitNotReady(context.Background(), 1, "status", "ready", 1*time.Second)
 	if err == nil {
 		t.Error("WaitNotReady() should return error when GetValue fails")
 	}
@@ -148,7 +148,7 @@ func TestClient_WaitNotReady_ImmediatelyNotReady(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := c.WaitNotReady(context.Background(), 1, "/status", "ready", 5*time.Second)
+	err := c.WaitNotReady(context.Background(), 1, "status", "ready", 5*time.Second)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -174,7 +174,7 @@ func TestClient_RunStart_ExecuteError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.RunStart(context.Background(), 1, "/commands/start")
+	err := c.RunStart(context.Background(), 1, "commands/start")
 	if err == nil {
 		t.Error("RunStart() should return error when ExecuteCommand fails")
 	}
@@ -186,7 +186,7 @@ func TestClient_RunStart_EnsureConnError(t *testing.T) {
 		Endpoint:  "localhost:6254",
 	}
 
-	err := c.RunStart(context.Background(), 1, "/commands/start")
+	err := c.RunStart(context.Background(), 1, "commands/start")
 	if err == nil {
 		t.Error("RunStart() should return error when ensureConn fails")
 	}
@@ -205,7 +205,7 @@ func TestClient_RunStop_ExecuteError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.RunStop(context.Background(), 1, "/commands/stop")
+	err := c.RunStop(context.Background(), 1, "commands/stop")
 	if err == nil {
 		t.Error("RunStop() should return error when ExecuteCommand fails")
 	}
@@ -217,7 +217,7 @@ func TestClient_RunStop_EnsureConnError(t *testing.T) {
 		Endpoint:  "localhost:6254",
 	}
 
-	err := c.RunStop(context.Background(), 1, "/commands/stop")
+	err := c.RunStop(context.Background(), 1, "commands/stop")
 	if err == nil {
 		t.Error("RunStop() should return error when ensureConn fails")
 	}
@@ -229,7 +229,7 @@ func TestClient_GetStringValue_EnsureConnError(t *testing.T) {
 		Endpoint:  "localhost:6254",
 	}
 
-	_, err := c.GetStringValue(context.Background(), 1, "/test/param")
+	_, err := c.GetStringValue(context.Background(), 1, "test/param")
 	if err == nil {
 		t.Error("GetStringValue() should return error when ensureConn fails")
 	}
@@ -248,7 +248,7 @@ func TestClient_GetStringValue_GetValueError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	_, err := c.GetStringValue(context.Background(), 1, "/test/param")
+	_, err := c.GetStringValue(context.Background(), 1, "test/param")
 	if err == nil {
 		t.Error("GetStringValue() should return error when GetValue fails")
 	}
@@ -257,9 +257,8 @@ func TestClient_GetStringValue_GetValueError(t *testing.T) {
 func TestClient_GetStringValue_EmptyOID(t *testing.T) {
 	mockClient := &mockCatenaServiceClient{
 		getValueFunc: func(ctx context.Context, in *st2138pb.GetValuePayload, opts ...grpc.CallOption) (*st2138pb.Value, error) {
-			// Verify OID was normalized to "/"
-			if in.Oid != "/" {
-				t.Errorf("Expected OID to be normalized to /, got %s", in.Oid)
+			if in.Oid != "" {
+				t.Errorf("Expected empty OID to pass through as empty string, got %s", in.Oid)
 			}
 			return &st2138pb.Value{
 				Kind: &st2138pb.Value_StringValue{StringValue: "test"},
@@ -295,7 +294,7 @@ func TestClient_GetStringValue_BoolValue(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	got, err := c.GetStringValue(context.Background(), 1, "/test/bool")
+	got, err := c.GetStringValue(context.Background(), 1, "test/bool")
 	if err != nil {
 		t.Errorf("GetStringValue() error = %v", err)
 	}
@@ -325,7 +324,7 @@ func TestClient_GetStringValue_ZeroSlot(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	_, err := c.GetStringValue(context.Background(), 0, "/test")
+	_, err := c.GetStringValue(context.Background(), 0, "test")
 	if err != nil {
 		t.Errorf("GetStringValue() with slot 0 error = %v", err)
 	}

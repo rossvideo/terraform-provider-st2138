@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
@@ -31,16 +30,10 @@ func (c *Client) SetStringValue(ctx context.Context, slot uint32, oid string, va
 		return err
 	}
 	// Use the provided slot as-is; caller is responsible for correctness
-	// Normalize OID: ensure it starts with '/'
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-
 	req := &st2138pb.SingleSetValuePayload{
 		Slot: slot,
 		Value: &st2138pb.SetValuePayload{
-			Oid:   roid,
+			Oid:   oid,
 			Value: &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: value}},
 		},
 	}
@@ -53,10 +46,6 @@ func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n 
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
 	var val *st2138pb.Value
 	// Check if n is integral within int32 range
 	if n == float64(int32(n)) {
@@ -66,7 +55,7 @@ func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n 
 	}
 	req := &st2138pb.SingleSetValuePayload{
 		Slot:  slot,
-		Value: &st2138pb.SetValuePayload{Oid: roid, Value: val},
+		Value: &st2138pb.SetValuePayload{Oid: oid, Value: val},
 	}
 	_, err := c.rpcClient.SetValue(ctx, req)
 	return err
@@ -77,13 +66,9 @@ func (c *Client) SetRawValue(ctx context.Context, slot uint32, oid string, value
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
 	req := &st2138pb.SingleSetValuePayload{
 		Slot:  slot,
-		Value: &st2138pb.SetValuePayload{Oid: roid, Value: value},
+		Value: &st2138pb.SetValuePayload{Oid: oid, Value: value},
 	}
 	_, err := c.rpcClient.SetValue(ctx, req)
 	return err
@@ -94,11 +79,7 @@ func (c *Client) GetParamDescriptor(ctx context.Context, slot uint32, oid string
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-	resp, err := c.rpcClient.GetParam(ctx, &st2138pb.GetParamPayload{Slot: slot, Oid: roid})
+	resp, err := c.rpcClient.GetParam(ctx, &st2138pb.GetParamPayload{Slot: slot, Oid: oid})
 	if err != nil {
 		return nil, err
 	}
@@ -111,13 +92,9 @@ func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, va
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
 	stream, err := c.rpcClient.ExecuteCommand(ctx, &st2138pb.ExecuteCommandPayload{
 		Slot:    slot,
-		Oid:     roid,
+		Oid:     oid,
 		Value:   value,
 		Respond: true,
 	})
@@ -146,11 +123,7 @@ func (c *Client) GetRawValue(ctx context.Context, slot uint32, oid string) (*st2
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-	return c.rpcClient.GetValue(ctx, &st2138pb.GetValuePayload{Slot: slot, Oid: roid})
+	return c.rpcClient.GetValue(ctx, &st2138pb.GetValuePayload{Slot: slot, Oid: oid})
 }
 
 // SetParamsWithSlot walks a JSON-like params object, sets all string and numeric leaves via SetValue.
@@ -207,14 +180,10 @@ func (c *Client) SetParamsWithSlot(ctx context.Context, dyn types.Dynamic, slot 
 			// other scalar types not expected; ignore
 		}
 	}
-	// Start walk at root with empty prefix; ensure leading '/'
+	// Start walk at root with empty prefix
 	walk("", data)
 	for _, p := range work {
-		// Normalize OID
 		oid := p.oid
-		if !strings.HasPrefix(oid, "/") {
-			oid = "/" + oid
-		}
 		switch v := p.v.(type) {
 		case string:
 			if err := c.SetStringValue(ctx, slot, oid, v); err != nil {

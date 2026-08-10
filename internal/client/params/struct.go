@@ -2,7 +2,6 @@ package params
 
 import (
 	"context"
-	"strings"
 
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 )
@@ -14,17 +13,11 @@ import (
 
 // SetStructValue sets a structured parameter value via gRPC.
 // Struct parameters contain nested key-value pairs organized hierarchically.
-// The OID is normalized to ensure it starts with '/'.
 func SetStructValue(ctx context.Context, client st2138pb.CatenaServiceClient, slot uint32, oid string, structData *st2138pb.StructValue) error {
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-
 	req := &st2138pb.SingleSetValuePayload{
 		Slot: slot,
 		Value: &st2138pb.SetValuePayload{
-			Oid:   roid,
+			Oid:   oid,
 			Value: &st2138pb.Value{Kind: &st2138pb.Value_StructValue{StructValue: structData}},
 		},
 	}
@@ -35,11 +28,7 @@ func SetStructValue(ctx context.Context, client st2138pb.CatenaServiceClient, sl
 // GetStructValue fetches a structured parameter value via gRPC.
 // Returns the struct data or an error if the fetch fails.
 func GetStructValue(ctx context.Context, client st2138pb.CatenaServiceClient, slot uint32, oid string) (*st2138pb.StructValue, error) {
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-	req := &st2138pb.GetValuePayload{Slot: slot, Oid: roid}
+	req := &st2138pb.GetValuePayload{Slot: slot, Oid: oid}
 	val, err := client.GetValue(ctx, req)
 	if err != nil {
 		return nil, err

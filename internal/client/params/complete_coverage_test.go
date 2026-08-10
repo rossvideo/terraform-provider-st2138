@@ -22,7 +22,7 @@ func TestGetFloat32ArrayValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetFloat32ArrayValue(context.Background(), mockClient, 1, "/test/array")
+	got, err := GetFloat32ArrayValue(context.Background(), mockClient, 1, "test/array")
 	if err != nil {
 		t.Errorf("GetFloat32ArrayValue() error = %v", err)
 	}
@@ -38,7 +38,7 @@ func TestGetFloat32ArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetFloat32ArrayValue(context.Background(), mockClient, 1, "/test/array")
+	_, err := GetFloat32ArrayValue(context.Background(), mockClient, 1, "test/array")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -55,7 +55,7 @@ func TestGetStringArrayValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetStringArrayValue(context.Background(), mockClient, 1, "/test/strings")
+	got, err := GetStringArrayValue(context.Background(), mockClient, 1, "test/strings")
 	if err != nil {
 		t.Errorf("GetStringArrayValue() error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestGetStringArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetStringArrayValue(context.Background(), mockClient, 1, "/test/strings")
+	_, err := GetStringArrayValue(context.Background(), mockClient, 1, "test/strings")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -90,7 +90,7 @@ func TestGetDataValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetDataValue(context.Background(), mockClient, 1, "/test/data")
+	got, err := GetDataValue(context.Background(), mockClient, 1, "test/data")
 	if err != nil {
 		t.Errorf("GetDataValue() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestGetDataValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetDataValue(context.Background(), mockClient, 1, "/test/data")
+	_, err := GetDataValue(context.Background(), mockClient, 1, "test/data")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -123,7 +123,7 @@ func TestGetStructValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetStructValue(context.Background(), mockClient, 1, "/test/struct")
+	got, err := GetStructValue(context.Background(), mockClient, 1, "test/struct")
 	if err != nil {
 		t.Errorf("GetStructValue() error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestGetStructValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetStructValue(context.Background(), mockClient, 1, "/test/struct")
+	_, err := GetStructValue(context.Background(), mockClient, 1, "test/struct")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -162,7 +162,7 @@ func TestSetStructArrayValue(t *testing.T) {
 		},
 	}
 
-	err := SetStructArrayValue(context.Background(), mockClient, 1, "/test/structs", structs)
+	err := SetStructArrayValue(context.Background(), mockClient, 1, "test/structs", structs)
 	if err != nil {
 		t.Errorf("SetStructArrayValue() error = %v", err)
 	}
@@ -176,7 +176,7 @@ func TestSetStructArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetStructArrayValue(context.Background(), mockClient, 1, "/test/structs", structs)
+	err := SetStructArrayValue(context.Background(), mockClient, 1, "test/structs", structs)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -195,7 +195,7 @@ func TestGetStructArrayValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetStructArrayValue(context.Background(), mockClient, 1, "/test/structs")
+	got, err := GetStructArrayValue(context.Background(), mockClient, 1, "test/structs")
 	if err != nil {
 		t.Errorf("GetStructArrayValue() error = %v", err)
 	}
@@ -211,7 +211,7 @@ func TestGetStructArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetStructArrayValue(context.Background(), mockClient, 1, "/test/structs")
+	_, err := GetStructArrayValue(context.Background(), mockClient, 1, "test/structs")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -229,7 +229,7 @@ func TestSetStructVariantValue(t *testing.T) {
 		},
 	}
 
-	err := SetStructVariantValue(context.Background(), mockClient, 1, "/test/variant", variant)
+	err := SetStructVariantValue(context.Background(), mockClient, 1, "test/variant", variant)
 	if err != nil {
 		t.Errorf("SetStructVariantValue() error = %v", err)
 	}
@@ -243,7 +243,7 @@ func TestSetStructVariantValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetStructVariantValue(context.Background(), mockClient, 1, "/test/variant", variant)
+	err := SetStructVariantValue(context.Background(), mockClient, 1, "test/variant", variant)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -260,7 +260,7 @@ func TestGetStructVariantValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetStructVariantValue(context.Background(), mockClient, 1, "/test/variant")
+	got, err := GetStructVariantValue(context.Background(), mockClient, 1, "test/variant")
 	if err != nil {
 		t.Errorf("GetStructVariantValue() error = %v", err)
 	}
@@ -276,7 +276,7 @@ func TestGetStructVariantValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetStructVariantValue(context.Background(), mockClient, 1, "/test/variant")
+	_, err := GetStructVariantValue(context.Background(), mockClient, 1, "test/variant")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -299,7 +299,7 @@ func TestSetStructVariantArrayValue(t *testing.T) {
 		},
 	}
 
-	err := SetStructVariantArrayValue(context.Background(), mockClient, 1, "/test/variants", variants)
+	err := SetStructVariantArrayValue(context.Background(), mockClient, 1, "test/variants", variants)
 	if err != nil {
 		t.Errorf("SetStructVariantArrayValue() error = %v", err)
 	}
@@ -313,7 +313,7 @@ func TestSetStructVariantArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetStructVariantArrayValue(context.Background(), mockClient, 1, "/test/variants", variants)
+	err := SetStructVariantArrayValue(context.Background(), mockClient, 1, "test/variants", variants)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -335,7 +335,7 @@ func TestGetStructVariantArrayValue(t *testing.T) {
 		},
 	}
 
-	got, err := GetStructVariantArrayValue(context.Background(), mockClient, 1, "/test/variants")
+	got, err := GetStructVariantArrayValue(context.Background(), mockClient, 1, "test/variants")
 	if err != nil {
 		t.Errorf("GetStructVariantArrayValue() error = %v", err)
 	}
@@ -351,7 +351,7 @@ func TestGetStructVariantArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetStructVariantArrayValue(context.Background(), mockClient, 1, "/test/variants")
+	_, err := GetStructVariantArrayValue(context.Background(), mockClient, 1, "test/variants")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -367,7 +367,7 @@ func TestSetDataValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetDataValue(context.Background(), mockClient, 1, "/test/data", dataPayload)
+	err := SetDataValue(context.Background(), mockClient, 1, "test/data", dataPayload)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -380,7 +380,7 @@ func TestSetEmptyValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetEmptyValue(context.Background(), mockClient, 1, "/test/trigger")
+	err := SetEmptyValue(context.Background(), mockClient, 1, "test/trigger")
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -393,7 +393,7 @@ func TestSetFloat32Value_Error(t *testing.T) {
 		},
 	}
 
-	err := SetFloat32Value(context.Background(), mockClient, 1, "/test/float", 3.14)
+	err := SetFloat32Value(context.Background(), mockClient, 1, "test/float", 3.14)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -406,7 +406,7 @@ func TestGetFloat32Value_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetFloat32Value(context.Background(), mockClient, 1, "/test/float")
+	_, err := GetFloat32Value(context.Background(), mockClient, 1, "test/float")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -420,7 +420,7 @@ func TestSetFloat32ArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetFloat32ArrayValue(context.Background(), mockClient, 1, "/test/floats", values)
+	err := SetFloat32ArrayValue(context.Background(), mockClient, 1, "test/floats", values)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -433,7 +433,7 @@ func TestSetInt32Value_Error(t *testing.T) {
 		},
 	}
 
-	err := SetInt32Value(context.Background(), mockClient, 1, "/test/int", 42)
+	err := SetInt32Value(context.Background(), mockClient, 1, "test/int", 42)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -446,7 +446,7 @@ func TestGetInt32Value_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetInt32Value(context.Background(), mockClient, 1, "/test/int")
+	_, err := GetInt32Value(context.Background(), mockClient, 1, "test/int")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -460,7 +460,7 @@ func TestSetInt32ArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetInt32ArrayValue(context.Background(), mockClient, 1, "/test/ints", values)
+	err := SetInt32ArrayValue(context.Background(), mockClient, 1, "test/ints", values)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -473,7 +473,7 @@ func TestGetInt32ArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetInt32ArrayValue(context.Background(), mockClient, 1, "/test/ints")
+	_, err := GetInt32ArrayValue(context.Background(), mockClient, 1, "test/ints")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -486,7 +486,7 @@ func TestGetStringValue_Error(t *testing.T) {
 		},
 	}
 
-	_, err := GetStringValue(context.Background(), mockClient, 1, "/test/string")
+	_, err := GetStringValue(context.Background(), mockClient, 1, "test/string")
 	if err == nil {
 		t.Error("Expected error when GetValue fails")
 	}
@@ -500,7 +500,7 @@ func TestSetStringArrayValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetStringArrayValue(context.Background(), mockClient, 1, "/test/strings", values)
+	err := SetStringArrayValue(context.Background(), mockClient, 1, "test/strings", values)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}
@@ -514,7 +514,7 @@ func TestSetStructValue_Error(t *testing.T) {
 		},
 	}
 
-	err := SetStructValue(context.Background(), mockClient, 1, "/test/struct", structVal)
+	err := SetStructValue(context.Background(), mockClient, 1, "test/struct", structVal)
 	if err == nil {
 		t.Error("Expected error when SetValue fails")
 	}

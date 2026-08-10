@@ -1,50 +1,8 @@
 package params
 
 import (
-	"strings"
 	"testing"
 )
-
-func TestOIDNormalization(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "already normalized",
-			input:    "/param/test",
-			expected: "/param/test",
-		},
-		{
-			name:     "needs normalization",
-			input:    "param/test",
-			expected: "/param/test",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "/",
-		},
-		{
-			name:     "single char",
-			input:    "p",
-			expected: "/p",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			roid := tt.input
-			if !strings.HasPrefix(roid, "/") {
-				roid = "/" + roid
-			}
-			if roid != tt.expected {
-				t.Errorf("OID normalization = %v, want %v", roid, tt.expected)
-			}
-		})
-	}
-}
 
 func TestStringValueTypes(t *testing.T) {
 	// Test that string values are properly typed

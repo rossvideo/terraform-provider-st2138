@@ -2,7 +2,6 @@ package params
 
 import (
 	"context"
-	"strings"
 
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 )
@@ -14,17 +13,11 @@ import (
 
 // SetStructVariantValue sets a struct variant parameter value via gRPC.
 // Struct variants allow for polymorphic structured data with type discrimination.
-// The OID is normalized to ensure it starts with '/'.
 func SetStructVariantValue(ctx context.Context, client st2138pb.CatenaServiceClient, slot uint32, oid string, variantData *st2138pb.StructVariantValue) error {
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-
 	req := &st2138pb.SingleSetValuePayload{
 		Slot: slot,
 		Value: &st2138pb.SetValuePayload{
-			Oid:   roid,
+			Oid:   oid,
 			Value: &st2138pb.Value{Kind: &st2138pb.Value_StructVariantValue{StructVariantValue: variantData}},
 		},
 	}
@@ -35,11 +28,7 @@ func SetStructVariantValue(ctx context.Context, client st2138pb.CatenaServiceCli
 // GetStructVariantValue fetches a struct variant parameter value via gRPC.
 // Returns the struct variant data or an error if the fetch fails.
 func GetStructVariantValue(ctx context.Context, client st2138pb.CatenaServiceClient, slot uint32, oid string) (*st2138pb.StructVariantValue, error) {
-	roid := oid
-	if !strings.HasPrefix(roid, "/") {
-		roid = "/" + roid
-	}
-	req := &st2138pb.GetValuePayload{Slot: slot, Oid: roid}
+	req := &st2138pb.GetValuePayload{Slot: slot, Oid: oid}
 	val, err := client.GetValue(ctx, req)
 	if err != nil {
 		return nil, err

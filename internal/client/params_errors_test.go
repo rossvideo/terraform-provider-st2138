@@ -19,7 +19,7 @@ func TestClient_SetStringValue_EnsureConnError(t *testing.T) {
 		Endpoint:  "localhost:6254",
 	}
 
-	err := c.SetStringValue(context.Background(), 1, "/test/param", "value")
+	err := c.SetStringValue(context.Background(), 1, "test/param", "value")
 	if err == nil {
 		t.Error("SetStringValue() should return error when ensureConn fails")
 	}
@@ -38,7 +38,7 @@ func TestClient_SetStringValue_SetValueError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetStringValue(context.Background(), 1, "/test/param", "value")
+	err := c.SetStringValue(context.Background(), 1, "test/param", "value")
 	if err == nil {
 		t.Error("SetStringValue() should return error when SetValue fails")
 	}
@@ -59,7 +59,7 @@ func TestClient_SetStringValue_EmptyValue(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetStringValue(context.Background(), 1, "/test/param", "")
+	err := c.SetStringValue(context.Background(), 1, "test/param", "")
 	if err != nil {
 		t.Errorf("SetStringValue() with empty value error = %v", err)
 	}
@@ -89,7 +89,7 @@ func TestClient_SetStringValue_LongValue(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetStringValue(context.Background(), 1, "/test/param", longValue)
+	err := c.SetStringValue(context.Background(), 1, "test/param", longValue)
 	if err != nil {
 		t.Errorf("SetStringValue() with long value error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestClient_SetStringValue_SpecialCharacters(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetStringValue(context.Background(), 1, "/test/param", specialValue)
+	err := c.SetStringValue(context.Background(), 1, "test/param", specialValue)
 	if err != nil {
 		t.Errorf("SetStringValue() with special chars error = %v", err)
 	}
@@ -132,7 +132,7 @@ func TestClient_SetNumberValue_EnsureConnError(t *testing.T) {
 		Endpoint:  "localhost:6254",
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", 42.0)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", 42.0)
 	if err == nil {
 		t.Error("SetNumberValue() should return error when ensureConn fails")
 	}
@@ -151,7 +151,7 @@ func TestClient_SetNumberValue_SetValueError(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", 99.9)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", 99.9)
 	if err == nil {
 		t.Error("SetNumberValue() should return error when SetValue fails")
 	}
@@ -176,7 +176,7 @@ func TestClient_SetNumberValue_Zero(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", 0.0)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", 0.0)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestClient_SetNumberValue_NegativeInteger(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", -123.0)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", -123.0)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -238,7 +238,7 @@ func TestClient_SetNumberValue_MaxInt32(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", math.MaxInt32)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", math.MaxInt32)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -265,7 +265,7 @@ func TestClient_SetNumberValue_MinInt32(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", math.MinInt32)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", math.MinInt32)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -292,7 +292,7 @@ func TestClient_SetNumberValue_JustOverMaxInt32(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", float64(math.MaxInt32)+1)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", float64(math.MaxInt32)+1)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -319,7 +319,7 @@ func TestClient_SetNumberValue_JustUnderMinInt32(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", float64(math.MinInt32)-1)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", float64(math.MinInt32)-1)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -348,7 +348,7 @@ func TestClient_SetNumberValue_VerySmallDecimal(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", 0.0001)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", 0.0001)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -380,7 +380,7 @@ func TestClient_SetNumberValue_NegativeFloat(t *testing.T) {
 		conn:      &grpc.ClientConn{},
 	}
 
-	err := c.SetNumberValue(context.Background(), 1, "/test/number", -3.14159)
+	err := c.SetNumberValue(context.Background(), 1, "test/number", -3.14159)
 	if err != nil {
 		t.Errorf("SetNumberValue() error = %v", err)
 	}
@@ -437,8 +437,8 @@ func TestClient_SetNumberValue_EmptyOID(t *testing.T) {
 		t.Errorf("SetNumberValue() with empty OID error = %v", err)
 	}
 
-	// Empty OID should be normalized to "/"
-	if capturedOID != "/" {
-		t.Errorf("Expected OID to be normalized to /, got %s", capturedOID)
+	// Empty OID passes through as empty string
+	if capturedOID != "" {
+		t.Errorf("Expected empty OID to pass through as empty string, got %s", capturedOID)
 	}
 }
