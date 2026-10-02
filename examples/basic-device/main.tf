@@ -31,7 +31,6 @@ resource "st2138_device" "basic" {
     transport = "grpc"
     tls       = false
   }
-  override_param_values_on_update = false
   parameters = st2138_parameters.basic_params.parameters
 }
 

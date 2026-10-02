@@ -7,12 +7,14 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -39,11 +41,10 @@ type commandRefsBlockModel struct {
 
 // deviceModel holds the Terraform state for a st2138_device resource.
 type deviceModel struct {
-	ID                          types.String `tfsdk:"id"`
-	Name                        types.String `tfsdk:"name"`
-	SlotID                      types.Int64  `tfsdk:"slot"`
-	Network                     types.Object `tfsdk:"network"`
-	OverrideParamValuesOnUpdate types.Bool   `tfsdk:"override_param_values_on_update"`
+	ID      types.String `tfsdk:"id"`
+	Name    types.String `tfsdk:"name"`
+	SlotID  types.Int64  `tfsdk:"slot"`
+	Network types.Object `tfsdk:"network"`
 	// parameters: dynamic value matching a single-slot shape, e.g. [{"counter": 1}]
 	Parameters        types.Dynamic          `tfsdk:"parameters"`
 	ParametersOut     types.Map              `tfsdk:"parameters_out"`
@@ -113,13 +114,9 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Required:    true,
 				Description: "Device slot this resource manages.",
 			},
-			"override_param_values_on_update": schema.BoolAttribute{
-				Optional:    true,
-				Description: "When true, re-applies all parameters on update. When false (default), parameters are only applied on create.",
-			},
 			"parameters": schema.DynamicAttribute{
 				Optional:    true,
-				Description: "Dynamic parameter set for this slot. Supports object or list-of-objects shapes such as [{\"counter\": 1, \"struct_example\": {...}}].",
+				Description: "Dynamic parameter set for this slot. All are applied on create; only changed values are applied on update. Supports object or list-of-objects shapes such as [{\"counter\": 1, \"struct_example\": {...}}].",
 			},
 			"parameters_out": schema.MapAttribute{
 				Computed:    true,
@@ -137,8 +134,9 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Commands for this slot from DeviceRequest.",
 			},
 			"status_value": schema.StringAttribute{
-				Computed:    true,
-				Description: "Most recent status value observed from command status polling when available.",
+				Computed:      true,
+				Description:   "Most recent status value observed from command status polling when available.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 		Blocks: map[string]schema.Block{
@@ -265,9 +263,56 @@ func (r *deviceResource) parseParameters(params types.Dynamic) (map[string]attr.
 	return result, diags
 }
 
+// toFOID returns the fully-qualified OID form (leading "/") that Catena requires.
+func toFOID(oid string) string {
+	oid = strings.TrimSpace(oid)
+	if oid == "" {
+		return ""
+	}
+	return "/" + strings.TrimPrefix(oid, "/")
+}
+
+// changedParams returns entries in next that are new or differ from prev.
+func changedParams(prev, next map[string]attr.Value) map[string]attr.Value {
+	changed := make(map[string]attr.Value)
+	for oid, v := range next {
+		if old, ok := prev[oid]; ok && old.Equal(v) {
+			continue
+		}
+		changed[oid] = v
+	}
+	return changed
+}
+
 // applySlotParams sets parameters on the device for the configured slot.
 func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oidValues map[string]attr.Value, diags *diag.Diagnostics) {
-	for oid, rawValue := range oidValues {
+	snapshot, err := r.client.GetDeviceSnapshot(ctx, slotNum)
+	if err != nil {
+		diags.AddError("failed to read device model", fmt.Sprintf("DeviceRequest slot %d: %s", slotNum, err))
+		return
+	}
+	missing := make([]string, 0)
+	for oid := range oidValues {
+		foid := toFOID(oid)
+		if _, ok := snapshot.FullParameters[foid]; ok {
+			continue
+		}
+		if _, ok := snapshot.FullParameters[strings.TrimPrefix(foid, "/")]; ok {
+			continue
+		}
+		missing = append(missing, oid)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		for _, oid := range missing {
+			diags.AddAttributeError(path.Root("parameters"), "Unknown parameter",
+				fmt.Sprintf("parameters.%q does not exist in the device model (slot %d)", oid, slotNum))
+		}
+		return
+	}
+
+	for key, rawValue := range oidValues {
+		oid := toFOID(key)
 		descriptor, err := r.client.GetParamDescriptor(ctx, slotNum, oid)
 		if err != nil {
 			diags.AddError("gRPC GetParam failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
@@ -359,7 +404,7 @@ func (r *deviceResource) commandInvocationFromAttr(value attr.Value) (commandInv
 	}
 
 	if v, ok := value.(types.String); ok {
-		invocation.OID = strings.TrimSpace(v.ValueString())
+		invocation.OID = toFOID(v.ValueString())
 		if invocation.OID == "" {
 			return invocation, fmt.Errorf("empty command oid")
 		}
@@ -372,7 +417,7 @@ func (r *deviceResource) commandInvocationFromAttr(value attr.Value) (commandInv
 	}
 
 	if s, ok := attrToString(fields["command"]); ok && strings.TrimSpace(s) != "" {
-		invocation.OID = s
+		invocation.OID = toFOID(s)
 	}
 
 	if invocation.OID == "" {
@@ -384,7 +429,7 @@ func (r *deviceResource) commandInvocationFromAttr(value attr.Value) (commandInv
 	}
 
 	if s, ok := attrToString(fields["status_foid"]); ok {
-		invocation.StatusFoid = s
+		invocation.StatusFoid = toFOID(s)
 	}
 	if s, ok := attrToString(fields["status_success_value"]); ok {
 		invocation.StatusSuccessValue = s
@@ -906,21 +951,20 @@ func (r *deviceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	slotNum := uint32(plan.SlotID.ValueInt64())
 
-	// Only re-apply parameters if override_param_values_on_update is true.
-	paramValues, parseDiags := r.parseParameters(plan.Parameters)
+	planParams, parseDiags := r.parseParameters(plan.Parameters)
 	resp.Diagnostics.Append(parseDiags...)
+	prevParams, prevDiags := r.parseParameters(prev.Parameters)
+	resp.Diagnostics.Append(prevDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	override := !plan.OverrideParamValuesOnUpdate.IsNull() && plan.OverrideParamValuesOnUpdate.ValueBool()
-	if override && len(paramValues) > 0 {
-		r.applySlotParams(ctx, slotNum, paramValues, &resp.Diagnostics)
+	if changed := changedParams(prevParams, planParams); len(changed) > 0 {
+		r.applySlotParams(ctx, slotNum, changed, &resp.Diagnostics)
 		if resp.Diagnostics.HasError() {
 			return
 		}
 	}
 
-	// Always refresh state from device.
 	paramsMap, fullParamsMap, commandsMap, err := r.buildSnapshotMaps(ctx, slotNum)
 	if err != nil {
 		resp.Diagnostics.AddError("failed to read device model", err.Error())
@@ -929,7 +973,10 @@ func (r *deviceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	plan.ParametersOut = paramsMap
 	plan.FullParametersOut = fullParamsMap
 	plan.CommandsOut = commandsMap
-	if plan.StatusValue.IsNull() {
+	if plan.StatusValue.IsUnknown() {
+		plan.StatusValue = prev.StatusValue
+	}
+	if plan.StatusValue.IsNull() || plan.StatusValue.IsUnknown() {
 		plan.StatusValue = types.StringValue("")
 	}
 

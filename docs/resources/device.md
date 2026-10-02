@@ -17,8 +17,6 @@ resource "st2138_device" "one_of_everything" {
     tls       = false
   }
 
-  override_param_values_on_update = false
-
   parameters = [
     {
       counter        = 1
@@ -60,10 +58,7 @@ See full working example in [examples/catena-test/main.tf](https://github.com/ro
 ### Optional
 
 - `name` (String): Human-readable name. If omitted, resource defaults to `device` for ID creation.
-- `override_param_values_on_update` (Bool):
-  - `false` (default behavior): parameters are applied on create only.
-  - `true`: re-applies configured `parameters` on update.
-- `parameters` (Dynamic): Parameter payload for the slot.
+- `parameters` (Dynamic): Parameter payload for the slot. All values are applied on create; only changed values are applied on update.
   - Supports either an object or a list/tuple of objects.
   - Objects are merged when a list is provided.
 - `startup_commands` (Single block): Commands to execute after create.
@@ -108,7 +103,7 @@ Read:
 
 Update:
 
-1. Reapplies `parameters` only when `override_param_values_on_update = true`.
+1. Applies only `parameters` whose values changed (or were added) since the last apply.
 2. Refreshes snapshot outputs.
 
 Delete:

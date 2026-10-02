@@ -53,7 +53,6 @@ The current `st2138_device` schema supports:
   - `network` block (`address`, `port`)
 - Optional:
   - `name`
-  - `override_param_values_on_update`
   - `parameters` (dynamic object or list-of-objects)
   - `network.transport`, `network.tls`
   - `startup_commands` block
@@ -83,5 +82,5 @@ That example demonstrates:
 
 - Transport defaults to `grpc` when not provided in `network.transport`.
 - The provider reads/writes values via gRPC and retries parameter set operations for transient failures.
-- `override_param_values_on_update = false` means parameter values are applied on create and not force-reapplied on every update.
+- All parameter values are applied on create; on update only changed values are applied.
 
