@@ -1,9 +1,8 @@
 # ST2138 Provider
 
-This provider manages Catena/ST2138 devices over gRPC.
+This provider manages Catena/ST2138 devices over gRPC and REST.
 https://github.com/SMPTE/st2138-a
-The current implementation in this repository is centered on one primary resource,
-`st2138_device`, with dynamic parameter writes and optional command blocks for lifecycle actions.
+The current implementation in this repository is centered on `st2138_device`, with dynamic parameter writes and optional command blocks for lifecycle actions. Devices can use gRPC or the standardized SMPTE REST routes.
 
 ## Current Provider Surface
 
@@ -74,6 +73,8 @@ The most up-to-date end-to-end example is:
 That example demonstrates:
 
 - Dynamic parameter payloads (`parameters`)
+- Structs, struct variants, arrays, and binary data payloads
+- REST transport configuration
 - Startup and shutdown command execution
 - Status polling comparator behavior
 - Output decoding for parameter/command maps

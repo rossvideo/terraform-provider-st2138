@@ -118,6 +118,7 @@ Legacy note:
 ## Notes On Parameters
 
 - `parameters` accepts nested values including numbers, strings, booleans, arrays, and objects.
+- Struct variants use `struct_variant_type` to select the typed `value`; variant arrays may contain different variant types.
 - Binary parameters use a `data_payload` object. Set `payload` to base64-encoded bytes, or `payload_file` to a file path; these are mutually exclusive. `url` can be used instead of either payload source. The provider computes the SHA-256 `digest` when bytes are supplied and no digest is provided.
 - Arrays must be homogeneous; mixed-type arrays are rejected.
 - Unknown or null dynamic values are treated as empty values where appropriate.
@@ -126,7 +127,8 @@ Legacy note:
 
 If operations fail:
 
-- Confirm `network.address` and `network.port` point to a reachable gRPC endpoint.
+- Confirm `network.address` and `network.port` point to a reachable Catena endpoint for the selected transport.
+- For REST, use the service's SMPTE API routes under `/st2138-api/v1`; endpoint lists are not discovered from the device.
 - Confirm parameter/command OIDs exist for the selected `slot`.
 - Confirm parameter value shapes match device descriptors (especially arrays and nested structs).
 - For status polling issues, verify `status_foid`, comparator, and expected value.

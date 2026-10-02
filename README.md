@@ -4,26 +4,27 @@ A Terraform provider for managing Catena devices and services compatible with SM
 
 ## Features
 
-- **Device Management**: Create, read, update, and delete Catena devices
-- **Remote gRPC Support**: Manage remote devices via gRPC endpoints
-- **Parameter Configuration**: Set device parameters via OID-based configuration
-- **Device Status Monitoring**: Poll device status and wait for readiness conditions
-- **Container Support**: Docker-based device deployment (experimental)
+- **Device Management**: Manage Catena/ST2138 device slots with `st2138_device`
+- **gRPC and REST**: Use gRPC or the SMPTE REST API at `/st2138-api/v1`
+- **Typed Parameters**: Configure scalars, arrays, structs, struct variants, and binary data payloads
+- **File Payloads**: Supply binary payloads as base64 strings or read them from a file
+- **Lifecycle Commands**: Optionally run commands on create and destroy, with status polling
+- **Computed Snapshots**: Read writable parameters, full parameters, and commands back from the device
 
 ## Requirements
 
 - Terraform >= 1.0
-- Go >= 1.25 (for building from source)
+- Go >= 1.26.6 (for building from source)
 
 ## Installation
 
-### Using OpenTofu Registry (Coming Soon)
+### Using OpenTofu Registry
 
 ```hcl
 terraform {
   required_providers {
-    catena = {
-      source = "registry.opentofu.org/rossvideo/st2138"
+    st2138 = {
+      source = "rossvideo/st2138"
     }
   }
 }
@@ -39,67 +40,36 @@ go build -o terraform-provider-st2138
 
 ## Configuration
 
-Provider configuration example:
+The provider currently has no configuration arguments:
 
 ```hcl
-provider "catena" {
-  endpoint       = "localhost:6254"  # gRPC service endpoint
-  transport      = "grpc"            # Transport protocol (grpc, http)
-  devices_dir    = "../devices"      # Directory containing device definitions
-  executables_dir = "../devices"     # Alias for devices_dir
-}
+provider "st2138" {}
 ```
 
-### Provider Arguments
-
-- `endpoint` (Optional) - Service endpoint in `host:port` format
-- `transport` (Optional) - Transport protocol, e.g., `grpc`, `http`
-- `devices_dir` (Optional) - Base directory for device-type files
-- `executables_dir` (Optional) - Alias for `devices_dir`
+The endpoint and transport are configured on each device's `network` block.
 
 ## Usage
 
 ### Creating a Device
 
 ```hcl
-resource "catena_device" "example" {
-  slot        = 1
-  name        = "my-device"
-  device_type = "remote-grpc"
-  address     = "192.168.1.100"
-  port        = 6254
+resource "st2138_device" "example" {
+  name = "example-device"
+  slot = 0
 
-  params_map = {
-    "/input/0/name"  = "Input 1"
-    "/input/1/name"  = "Input 2"
+  network {
+    address   = "localhost"
+    port      = 6254
+    transport = "grpc"
   }
 
-  device_status {
-    oid         = "/status/ready"
-    ready_value = "true"
+  parameters = {
+    counter = 1
   }
 }
 ```
 
-### Parameters
-
-- `slot` (Required) - Device slot ID for gRPC calls
-- `name` (Optional) - Human-readable device name
-- `device_type` (Optional) - Device type identifier (e.g., `pat2mxl`, `remote-grpc`)
-- `address` (Optional) - Remote device address (required for `remote-grpc`)
-- `port` (Optional) - Remote device port (required for `remote-grpc`)
-- `params_map` (Optional) - Map of OID to value pairs
-- `params` (Optional) - List of OID/value pair blocks for structured configuration
-- `start_command` (Optional) - Command to run after device startup
-- `stop_command` (Optional) - Command to run before device deletion
-- `device_status` (Optional) - Status polling configuration block
-- `apply_all` (Optional) - When true, always apply all params on every update
-
-### Computed Values
-
-- `id` - Unique device identifier
-- `container_id` - Docker container ID (if applicable)
-- `status_value` - Current polled status value
+`network.transport` supports `grpc` and `rest`; REST uses the standardized SMPTE routes under `/st2138-api/v1`. Startup and shutdown command blocks are optional. See [docs/resources/device.md](docs/resources/device.md) for parameter types, binary payloads, command configuration, and lifecycle behavior.
 
 ## Development
 
@@ -107,7 +77,7 @@ resource "catena_device" "example" {
 
 - `/internal/provider/` - Provider configuration
 - `/internal/services/device/` - Device resource implementation
-- `/internal/client/` - gRPC client code
+- `/internal/client/` - gRPC and REST client code
 - `/internal/genproto/` - Generated protobuf files
 - `/examples/` - Terraform configuration examples
 - `/docs/` - API documentation
@@ -126,25 +96,28 @@ Generate coverage reports in multiple formats:
 # Run tests and generate lcov.info
 ./test.sh
 
-# View coverage summary
-go test ./... -cover
+# Run tests serially and generate a Go coverage profile
+go test ./... -coverprofile=coverage.out -covermode=atomic -count=1 -p=1 -parallel=1
 
-# Generate HTML coverage report (Go native)
-go test ./... -coverprofile=coverage.out
+# View coverage summary
+go tool cover -func=coverage.out
+
+# Generate HTML coverage report
 go tool cover -html=coverage.out -o coverage.html
-open coverage.html
 
 # Generate HTML coverage report (LCOV format)
 genhtml lcov.info -o coverage_html
-open coverage_html/index.html
 ```
 
-**Current Coverage:**
-- Client package: 72.3%
-- Params package: 86.2%
-- Overall project: 45.7%
+Open `coverage.html` or `coverage_html/index.html` in a browser to view a report.
 
-The `test.sh` script generates both `coverage.out` (Go format) and `lcov.info` (LCOV format) for compatibility with various coverage visualization tools.
+**Current Coverage:**
+- `internal/client`: 53.0%
+- `internal/client/params`: 100.0%
+- `internal/services/device`: 30.0%
+- Overall project: 13.6%
+
+Coverage was measured with the serial test command above. The `test.sh` script also generates `coverage.out` (Go format) and `lcov.info` (LCOV format) for coverage visualization tools.
 
 ### Building
 
@@ -159,8 +132,8 @@ This repository includes a tag-driven GitHub Actions release workflow using GoRe
 1. Create and push a semantic version tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 2. GitHub Actions publishes release assets including:
@@ -172,7 +145,7 @@ These are required for OpenTofu Registry version detection.
 
 ## Documentation
 
-See `/docs/` directory for comprehensive provider and resource documentation.
+See the [`docs/`](docs/index.md) directory for provider and resource documentation.
 
 See `/examples/` directory for usage examples.
 
