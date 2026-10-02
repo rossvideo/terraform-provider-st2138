@@ -45,8 +45,8 @@ resource "st2138_device" "one_of_everything_slot0" {
   slot                            = 0
   network {
     address                         = "localhost"
-    port                            = 6254
-    transport                       = "grpc"
+    port                            = 9080
+    transport                       = "rest"
     tls                             = false
   }
 
