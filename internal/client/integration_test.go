@@ -240,7 +240,7 @@ func TestIntegration_CommandExecution(t *testing.T) {
 		t.Fatalf("Expected 1 command, got %d", len(state.commands))
 	}
 	if state.commands[0] != "commands/start" {
-		t.Errorf("Command = %s, want /commands/start", state.commands[0])
+		t.Errorf("Command = %s, want commands/start", state.commands[0])
 	}
 
 	// Execute stop command
