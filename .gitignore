@@ -44,4 +44,4 @@ internal/services/device/TESTING_NOTES.md
 scan_security.sh
 .terraform.lock.hcl
 scripts/blackduck.sh
-scripts/blackduck-report/terraform_provider_st2138_v0_1_1_BlackDuck_RiskReport.json
+scripts/blackduck-report/*
