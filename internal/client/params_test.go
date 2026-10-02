@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"google.golang.org/grpc"
 )
 
 func TestParseValueString(t *testing.T) {
@@ -80,6 +81,8 @@ func TestParseValueString(t *testing.T) {
 func TestSetParamsWithSlot_NullDynamic(t *testing.T) {
 	c := &Client{
 		Transport: "grpc",
+		rpcClient: &mockCatenaServiceClient{},
+		conn:      &grpc.ClientConn{},
 	}
 
 	// Test with null Dynamic value - should return error trying to connect
@@ -92,6 +95,8 @@ func TestSetParamsWithSlot_NullDynamic(t *testing.T) {
 func TestSetParamsWithSlot_UnknownDynamic(t *testing.T) {
 	c := &Client{
 		Transport: "grpc",
+		rpcClient: &mockCatenaServiceClient{},
+		conn:      &grpc.ClientConn{},
 	}
 
 	// Test with unknown Dynamic value - should return error trying to connect

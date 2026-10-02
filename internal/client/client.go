@@ -66,9 +66,6 @@ func (c *Client) ensureConn(ctx context.Context) error {
 	if c.conn != nil && c.rpcClient != nil {
 		return nil
 	}
-	// Dial timeout for establishing connection
-	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	target := c.Endpoint
 	var opts []grpc.DialOption
 	// If endpoint includes an explicit scheme (://), use it to decide TLS
@@ -97,8 +94,13 @@ func (c *Client) ensureConn(ctx context.Context) error {
 		// No scheme provided: default to insecure and use target as-is
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
-	opts = append(opts, grpc.WithBlock())
-	conn, err := grpc.DialContext(dctx, target, opts...)
+	opts = append(opts, grpc.WithBlock(), grpc.WithChainUnaryInterceptor(setValueRetryInterceptor))
+	conn, err := retryDial(ctx, func() (*grpc.ClientConn, error) {
+		// Per-attempt dial timeout
+		dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		return grpc.DialContext(dctx, target, opts...)
+	}, connectPolicy)
 	if err != nil {
 		return err
 	}

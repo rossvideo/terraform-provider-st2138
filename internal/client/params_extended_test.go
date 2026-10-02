@@ -44,6 +44,7 @@ func TestSetParamsWithSlot_ComplexJSON(t *testing.T) {
 func TestSetParamsWithSlot_Unknown(t *testing.T) {
 	c := &Client{
 		Transport: "grpc",
+		rpcClient: &mockCatenaServiceClient{},
 		conn:      &grpc.ClientConn{},
 	}
 

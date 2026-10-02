@@ -1061,41 +1061,15 @@ func (r *deviceResource) parseValueString(s string) any {
 	return s
 }
 
+// Retries are handled by the client's SetValue interceptor.
 func (r *deviceResource) setStringValueWithRetry(ctx context.Context, slot uint32, oid, value string) error {
-	var lastErr error
-	for i := 0; i < 3; i++ {
-		if err := r.client.SetStringValue(ctx, slot, oid, value); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
-	}
-	return lastErr
+	return r.client.SetStringValue(ctx, slot, oid, value)
 }
 
 func (r *deviceResource) setNumberValueWithRetry(ctx context.Context, slot uint32, oid string, n float64) error {
-	var lastErr error
-	for i := 0; i < 3; i++ {
-		if err := r.client.SetNumberValue(ctx, slot, oid, n); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
-	}
-	return lastErr
+	return r.client.SetNumberValue(ctx, slot, oid, n)
 }
 
 func (r *deviceResource) setRawValueWithRetry(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
-	var lastErr error
-	for i := 0; i < 3; i++ {
-		if err := r.client.SetRawValue(ctx, slot, oid, value); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
-	}
-	return lastErr
+	return r.client.SetRawValue(ctx, slot, oid, value)
 }
