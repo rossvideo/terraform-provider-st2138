@@ -1,9 +1,16 @@
 version: "3.8"
 
 services:
-  catena:
-    image: ghcr.io/rossvideo/catena:one-of-everything-gRPC-dev
+  catena_grpc:
+    build: .
+    image: catena-one-of-everything
     container_name: catena-one-of-everything
     ports:
       - "6254:6254"
+      - "9080:9080"
+      - "8080:8080"
+    environment:
+      - CATENA_USE_GRPC=true
+      - CATENA_USE_REST=true
+      - CATENA_AUTHZ=false
     restart: unless-stopped

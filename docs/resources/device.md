@@ -68,7 +68,7 @@ See full working example in [examples/catena-test/main.tf](https://github.com/ro
 
 Both blocks share the same schema:
 
-- `commands` (Dynamic, required): List of `st2138_command` resources, command objects, or command OID strings.
+- `commands` (Dynamic, optional): List of `st2138_command` resources, command objects, or command OID strings.
 
 Behavior notes:
 
@@ -118,6 +118,7 @@ Legacy note:
 ## Notes On Parameters
 
 - `parameters` accepts nested values including numbers, strings, booleans, arrays, and objects.
+- Binary parameters use a `data_payload` object. Set `payload` to base64-encoded bytes, or `payload_file` to a file path; these are mutually exclusive. `url` can be used instead of either payload source. The provider computes the SHA-256 `digest` when bytes are supplied and no digest is provided.
 - Arrays must be homogeneous; mixed-type arrays are rejected.
 - Unknown or null dynamic values are treated as empty values where appropriate.
 

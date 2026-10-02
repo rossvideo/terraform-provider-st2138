@@ -16,28 +16,31 @@ terraform {
 
 provider "st2138" {}
 
-resource "st2138_command" "start_ooe_command" {
-    command                 = "fib_start"
-    status_foid              = "number_example"
+resource "st2138_command" "start_counter_command" {
+    command                 = "start"
+    status_foid              = "running"
     status_success_comparator = "ne"
     status_success_value     = "0"
     timeout_seconds          = 5
 }
-resource "st2138_command" "stop_ooe_command" {
-    command                 = "fib_stop"
+resource "st2138_command" "stop_counter_command" {
+    command                 = "stop"
+    status_foid              = "running"
+    status_success_comparator = "ne"
+    status_success_value     = "1"
     timeout_seconds          = 5
 }
 
-resource "st2138_command" "set_0_ooe_command" {
-    command                 = "fib_set"
-    value                   = { int32_value = 0 }
-    status_foid              = "number_example"
+resource "st2138_command" "reset_counter_command" {
+    command                 = "reset"
+    status_foid              = "counter"
     status_success_comparator = "eq"
     status_success_value     = "0"
     timeout_seconds          = 5
 }
 
-resource "st2138_device" "one_of_everything" {
+resource "st2138_device" "one_of_everything_slot0" {
+  depends_on = [st2138_device.one_of_everything_slot1,st2138_device.one_of_everything_slot2]
   name                            = "One of Everything"
   slot                            = 0
   network {
@@ -50,72 +53,130 @@ resource "st2138_device" "one_of_everything" {
   
   parameters = [
     {
-      authz_admin     = "You have st2138:adm scope!"
-      authz_configure = "You have st2138:cfg scope!"
-      authz_monitor   = "You have st2138:mon scope!"
-      authz_operate   = "You have st2138:op scope!"
-      constraint_examples = {
-        float32_range              = 10
-        float_array_range          = [11.5, 22.5, 33.5, 44.5, ]
-        int32_choice               = 1
-        int32_range                = 6
-        int_array_choice           = [0, 1, 0, 0, 1, ]
-        int_array_range            = [0, 2, 4, 6, 8, 10, ]
-        string_array_choice        = ["a", "b", "a", ]
-        string_array_length        = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", ]
-        string_choice              = "a"
-        string_length              = "Hello worl"
-        string_string_array_choice = ["<#FF0000>", "<#00FF00>", "<#0000FF>", ]
-        string_string_choice       = "<#FF0000>"
-      }
-      counter        = 1
-      float_array    = [1.1, 2.2, 3.3, 4.4, ]
-      float_example  = 0
-      menu_button    = 0
-      number_array   = [1, 2, 3, 4, ]
-      number_example = 0
-      ref_struct     = ""
-      string_array   = ["one", "two", "three", "four", "five", ]
-      string_example = "Hello World"
-      struct_array   = [
-        {
-          nested_struct = {
-            num_1 = 1
-            num_2 = 2
-          }
-        },
-        {
-          nested_struct = {
-            num_1 = 3
-            num_2 = 4
-          }
-        },
-      ]
-      struct_example = {
-        nested_struct = {
-          num_1 = 1
-          num_2 = 2
-        }
-      }
+      counter = 1
+
     },
   ]
 
   startup_commands {
-    commands = [st2138_command.set_0_ooe_command, st2138_command.start_ooe_command]
+    commands = [st2138_command.reset_counter_command, st2138_command.start_counter_command]
   }
 
   shutdown_commands {
-    commands = [st2138_command.stop_ooe_command, st2138_command.set_0_ooe_command]
+    commands = [st2138_command.stop_counter_command, st2138_command.reset_counter_command]
   }
   
 }
+
+resource "st2138_device" "one_of_everything_slot1" {
+  name                            = "One of Everything"
+  slot                            = 1
+  network {
+    address                         = "localhost"
+    port                            = 6254
+    transport                       = "grpc"
+    tls                             = false
+  }
+
+  
+  parameters = [
+    {
+      brightness = 100
+      contrast = 51
+      saturation = 55
+      resolution = "1920x1400"
+    },
+  ]
+}
+
+resource "st2138_device" "one_of_everything_slot2" {
+  name                            = "One of Everything"
+  slot                            = 2
+  network {
+    address                         = "localhost"
+    port                            = 6254
+    transport                       = "grpc"
+    tls                             = false
+  }
+
+  
+  parameters = [
+    {
+     sample_string_array = ["alpha","bravo","charlie"]
+     sample_float_array = [1.0,1.1,2.0]
+     sample_int_array = [5, 4, 3, 2]
+     device_name ="tofu controled demo device"
+     muted = 1
+     volume = 100
+     sample_struct_variant_array = [
+      {
+        nested_struct = {
+          struct_variant_type = "int_kind"
+          value = 10
+        }
+      },
+      {
+        nested_struct = {
+          struct_variant_type = "string_kind"
+          value = "hello"
+        }
+      }
+      
+     ]
+     sample_struct_array = [
+      {
+        nested_struct = {
+          label = "entry_a_1"
+          count = 10
+        }
+      },
+      {
+        nested_struct = {
+          label = "entry_b_1"
+          count = 11
+        }
+      },
+     ]
+     sample_float = 2.821
+     struct_example = {
+        nested_struct = {
+          number = 1
+          text = "Slot 2 struct that was set by tofu"
+        }
+     }
+     sample_struct_variant = {
+       nested_struct = {
+         struct_variant_type = "int_kind"
+         value = 10
+       }
+     }
+     
+     sample_binary = {
+      data_payload ={
+        "metadata": {},
+        "digest": "",
+        "payload_encoding": "UNCOMPRESSED",
+        "payload": "yv66vg=="
+     }}
+
+    #  sample_binary = {
+    #   data_payload = {
+    #     metadata         = {}
+    #     payload_encoding = "UNCOMPRESSED"
+    #     payload_file     = "${path.module}/payload.bin"
+    #   }
+    # }
+    },
+  ]
+}
+
 
 # Output writable parameters with native OpenTofu values where possible.
 # JSON-looking strings from the provider are decoded into numbers, lists, and maps.
 output "device_params" {
   description = "writable parameters for the configured slot with decoded values where possible"
   value = {
-    for foid, raw in st2138_device.one_of_everything.parameters_out :
+    for foid, raw in st2138_device.one_of_everything_slot0.parameters_out :
     foid => try(jsondecode(raw), raw)
   }
 }
@@ -123,7 +184,7 @@ output "device_params" {
 output "device_full_params" {
   description = "all parameters for the configured slot with decoded values where possible"
   value = {
-    for foid, raw in st2138_device.one_of_everything.full_parameters_out :
+    for foid, raw in st2138_device.one_of_everything_slot0.full_parameters_out :
     foid => try(jsondecode(raw), raw)
   }
 }
@@ -131,7 +192,7 @@ output "device_full_params" {
 output "device_commands" {
   description = "commands for the configured slot with decoded values where possible"
   value = {
-    for foid, raw in st2138_device.one_of_everything.commands_out :
+    for foid, raw in st2138_device.one_of_everything_slot0.commands_out :
     foid => try(jsondecode(raw), raw)
   }
 

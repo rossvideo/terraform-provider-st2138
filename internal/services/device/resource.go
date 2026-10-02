@@ -2,6 +2,8 @@ package device
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"math"
 	"math/big"
@@ -165,7 +167,7 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Reusable command refs to run after Create.",
 				Attributes: map[string]schema.Attribute{
 					"commands": schema.DynamicAttribute{
-						Required:    true,
+						Optional:    true,
 						Description: "List of st2138_command resources, command objects, or command OID strings.",
 					},
 				},
@@ -174,7 +176,7 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Reusable command refs to run during Delete.",
 				Attributes: map[string]schema.Attribute{
 					"commands": schema.DynamicAttribute{
-						Required:    true,
+						Optional:    true,
 						Description: "List of st2138_command resources, command objects, or command OID strings.",
 					},
 				},
@@ -593,12 +595,25 @@ func (r *deviceResource) attrMap(value attr.Value) (map[string]attr.Value, error
 }
 
 func (r *deviceResource) attrValueToProtoValue(value attr.Value, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
-	switch v := value.(type) {
-	case types.Dynamic:
-		if v.IsNull() || v.IsUnknown() || v.UnderlyingValue() == nil {
+	if dynamic, ok := value.(types.Dynamic); ok {
+		if dynamic.IsNull() || dynamic.IsUnknown() || dynamic.UnderlyingValue() == nil {
 			return &st2138pb.Value{Kind: &st2138pb.Value_EmptyValue{EmptyValue: &st2138pb.Empty{}}}, nil
 		}
-		return r.attrValueToProtoValue(v.UnderlyingValue(), descriptor)
+		return r.attrValueToProtoValue(dynamic.UnderlyingValue(), descriptor)
+	}
+
+	if descriptor != nil {
+		switch descriptor.GetType() {
+		case st2138pb.ParamType_BINARY:
+			return r.dataPayloadToProtoValue(value)
+		case st2138pb.ParamType_STRUCT_VARIANT:
+			return r.structVariantToProtoValue(value, descriptor)
+		case st2138pb.ParamType_STRUCT_VARIANT_ARRAY:
+			return r.structVariantArrayToProtoValue(value, descriptor)
+		}
+	}
+
+	switch v := value.(type) {
 	case types.String:
 		if descriptor != nil {
 			switch descriptor.GetType() {
@@ -632,6 +647,191 @@ func (r *deviceResource) attrValueToProtoValue(value attr.Value, descriptor *st2
 	default:
 		return nil, fmt.Errorf("unsupported value type %T", value)
 	}
+}
+
+func (r *deviceResource) dataPayloadToProtoValue(value attr.Value) (*st2138pb.Value, error) {
+	fields, err := r.attrMap(value)
+	if err != nil {
+		return nil, fmt.Errorf("data payload must be an object: %w", err)
+	}
+	if nested, ok := fields["data_payload"]; ok && len(fields) == 1 {
+		fields, err = r.attrMap(nested)
+		if err != nil {
+			return nil, fmt.Errorf("data_payload must be an object: %w", err)
+		}
+	}
+
+	payload := &st2138pb.DataPayload{}
+	if rawMetadata, ok := fields["metadata"]; ok {
+		metadata, err := r.attrMap(rawMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("data payload metadata must be an object: %w", err)
+		}
+		payload.Metadata = make(map[string]string, len(metadata))
+		for key, rawValue := range metadata {
+			metadataValue, err := stringAttrValue(rawValue)
+			if err != nil {
+				return nil, fmt.Errorf("data payload metadata %q: %w", key, err)
+			}
+			payload.Metadata[key] = metadataValue
+		}
+	}
+
+	if rawEncoding, ok := fields["payload_encoding"]; ok {
+		encoding, err := stringAttrValue(rawEncoding)
+		if err != nil {
+			return nil, fmt.Errorf("data payload encoding: %w", err)
+		}
+		encodingValue, ok := st2138pb.DataPayload_PayloadEncoding_value[strings.ToUpper(encoding)]
+		if !ok {
+			return nil, fmt.Errorf("unsupported data payload encoding %q", encoding)
+		}
+		payload.PayloadEncoding = st2138pb.DataPayload_PayloadEncoding(encodingValue)
+	}
+
+	payloadSources := 0
+	for _, source := range []string{"payload", "payload_file", "url"} {
+		if _, ok := fields[source]; ok {
+			payloadSources++
+		}
+	}
+	if payloadSources != 1 {
+		return nil, fmt.Errorf("data payload must set exactly one of payload, payload_file, or url")
+	}
+
+	var payloadBytes []byte
+	if rawPayload, ok := fields["payload"]; ok {
+		encoded, err := stringAttrValue(rawPayload)
+		if err != nil {
+			return nil, fmt.Errorf("data payload payload must be a base64 string: %w", err)
+		}
+		payloadBytes, err = base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("data payload payload must be valid base64: %w", err)
+		}
+		payload.Kind = &st2138pb.DataPayload_Payload{Payload: payloadBytes}
+	}
+	if rawFile, ok := fields["payload_file"]; ok {
+		filePath, err := stringAttrValue(rawFile)
+		if err != nil {
+			return nil, fmt.Errorf("data payload payload_file must be a string: %w", err)
+		}
+		payloadBytes, err = os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("read data payload file %q: %w", filePath, err)
+		}
+		payload.Kind = &st2138pb.DataPayload_Payload{Payload: payloadBytes}
+	}
+	if rawURL, ok := fields["url"]; ok {
+		url, err := stringAttrValue(rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("data payload url must be a string: %w", err)
+		}
+		payload.Kind = &st2138pb.DataPayload_Url{Url: url}
+	}
+
+	if rawDigest, ok := fields["digest"]; ok {
+		digest, err := stringAttrValue(rawDigest)
+		if err != nil {
+			return nil, fmt.Errorf("data payload digest must be a base64 string: %w", err)
+		}
+		if digest != "" {
+			payload.Digest, err = base64.StdEncoding.DecodeString(digest)
+			if err != nil {
+				return nil, fmt.Errorf("data payload digest must be valid base64: %w", err)
+			}
+		}
+	}
+	if len(payload.Digest) == 0 && payload.GetKind() != nil {
+		if _, isBytes := payload.GetKind().(*st2138pb.DataPayload_Payload); isBytes {
+			checksum := sha256.Sum256(payloadBytes)
+			payload.Digest = checksum[:]
+		}
+	}
+
+	return &st2138pb.Value{Kind: &st2138pb.Value_DataPayload{DataPayload: payload}}, nil
+}
+
+func stringAttrValue(value attr.Value) (string, error) {
+	if dynamic, ok := value.(types.Dynamic); ok {
+		if dynamic.IsNull() || dynamic.IsUnknown() || dynamic.UnderlyingValue() == nil {
+			return "", fmt.Errorf("value is null or unknown")
+		}
+		return stringAttrValue(dynamic.UnderlyingValue())
+	}
+	stringValue, ok := value.(types.String)
+	if !ok || stringValue.IsNull() || stringValue.IsUnknown() {
+		return "", fmt.Errorf("expected string, got %T", value)
+	}
+	return stringValue.ValueString(), nil
+}
+
+func (r *deviceResource) structVariantToProtoValue(value attr.Value, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
+	fields, err := r.attrMap(value)
+	if err != nil {
+		return nil, fmt.Errorf("struct variant must be an object: %w", err)
+	}
+	if _, hasVariantType := fields["struct_variant_type"]; !hasVariantType && len(fields) == 1 {
+		if nested, ok := fields["nested_struct"]; ok {
+			fields, err = r.attrMap(nested)
+			if err != nil {
+				return nil, fmt.Errorf("nested struct variant must be an object: %w", err)
+			}
+		}
+	}
+
+	rawVariantType, ok := fields["struct_variant_type"]
+	if !ok {
+		return nil, fmt.Errorf("struct variant is missing struct_variant_type")
+	}
+	variantTypeValue, err := r.attrValueToProtoValue(rawVariantType, nil)
+	if err != nil {
+		return nil, fmt.Errorf("struct variant type: %w", err)
+	}
+	variantType, ok := variantTypeValue.GetKind().(*st2138pb.Value_StringValue)
+	if !ok {
+		return nil, fmt.Errorf("struct_variant_type must be a string")
+	}
+
+	rawValue, ok := fields["value"]
+	if !ok {
+		return nil, fmt.Errorf("struct variant is missing value")
+	}
+	var valueDescriptor *st2138pb.Param
+	if descriptor != nil {
+		valueDescriptor = descriptor.GetParams()[variantType.StringValue]
+	}
+	protoValue, err := r.attrValueToProtoValue(rawValue, valueDescriptor)
+	if err != nil {
+		return nil, fmt.Errorf("struct variant value: %w", err)
+	}
+
+	return &st2138pb.Value{Kind: &st2138pb.Value_StructVariantValue{
+		StructVariantValue: &st2138pb.StructVariantValue{
+			StructVariantType: variantType.StringValue,
+			Value:             protoValue,
+		},
+	}}, nil
+}
+
+func (r *deviceResource) structVariantArrayToProtoValue(value attr.Value, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
+	elements, err := r.attrSequence(value)
+	if err != nil {
+		return nil, fmt.Errorf("struct variant array must be a list or tuple: %w", err)
+	}
+
+	variants := make([]*st2138pb.StructVariantValue, 0, len(elements))
+	for index, element := range elements {
+		converted, err := r.structVariantToProtoValue(element, descriptor)
+		if err != nil {
+			return nil, fmt.Errorf("variant %d: %w", index, err)
+		}
+		variants = append(variants, converted.GetStructVariantValue())
+	}
+
+	return &st2138pb.Value{Kind: &st2138pb.Value_StructVariantArrayValues{
+		StructVariantArrayValues: &st2138pb.StructVariantList{StructVariants: variants},
+	}}, nil
 }
 
 func (r *deviceResource) numberToProtoValue(v types.Number, descriptor *st2138pb.Param) (*st2138pb.Value, error) {
