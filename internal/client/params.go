@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
+	"google.golang.org/protobuf/proto"
 )
 
 // Create: Handles param creation in Terraform
@@ -26,6 +29,9 @@ func (c *Client) SetParams(ctx context.Context, dyn types.Dynamic) error {
 
 // SetStringValue performs GetParam then SetValue for a string OID.
 func (c *Client) SetStringValue(ctx context.Context, slot uint32, oid string, value string) error {
+	if c.usesREST() {
+		return c.SetRawValue(ctx, slot, oid, &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: value}})
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
@@ -43,6 +49,15 @@ func (c *Client) SetStringValue(ctx context.Context, slot uint32, oid string, va
 
 // SetNumberValue sets a numeric param; prefers int32 when value is integral and in range, else float32.
 func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n float64) error {
+	if c.usesREST() {
+		var value *st2138pb.Value
+		if n == float64(int32(n)) {
+			value = &st2138pb.Value{Kind: &st2138pb.Value_Int32Value{Int32Value: int32(n)}}
+		} else {
+			value = &st2138pb.Value{Kind: &st2138pb.Value_Float32Value{Float32Value: float32(n)}}
+		}
+		return c.SetRawValue(ctx, slot, oid, value)
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
@@ -63,6 +78,10 @@ func (c *Client) SetNumberValue(ctx context.Context, slot uint32, oid string, n 
 
 // SetRawValue sends a fully-formed Catena value payload for the given OID.
 func (c *Client) SetRawValue(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
+	if c.usesREST() {
+		_, err := c.restRequest(ctx, http.MethodPut, fmt.Sprintf("/%d/value/%s", slot, strings.Trim(oid, "/")), value, nil, nil)
+		return err
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
@@ -76,6 +95,16 @@ func (c *Client) SetRawValue(ctx context.Context, slot uint32, oid string, value
 
 // GetParamDescriptor fetches the parameter descriptor for an OID.
 func (c *Client) GetParamDescriptor(ctx context.Context, slot uint32, oid string) (*st2138pb.Param, error) {
+	if c.usesREST() {
+		component := &st2138pb.DeviceComponent_ComponentParam{}
+		if _, err := c.restRequest(ctx, http.MethodGet, fmt.Sprintf("/%d/param/%s", slot, strings.Trim(oid, "/")), nil, nil, component); err != nil {
+			return nil, err
+		}
+		if component.GetParam() == nil {
+			return nil, fmt.Errorf("REST GetParam returned no param for %s", oid)
+		}
+		return component.GetParam(), nil
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
@@ -89,6 +118,20 @@ func (c *Client) GetParamDescriptor(ctx context.Context, slot uint32, oid string
 // ExecuteCommand invokes a device command and drains the streaming response.
 // value may be nil if the command takes no parameter.
 func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, value *st2138pb.Value) error {
+	if c.usesREST() {
+		var commandValue proto.Message
+		if value != nil && value.GetEmptyValue() == nil {
+			commandValue = value
+		}
+		response := &st2138pb.CommandResponse{}
+		if _, err := c.restRequest(ctx, http.MethodPost, fmt.Sprintf("/%d/command/%s?respond=true", slot, strings.Trim(oid, "/")), commandValue, nil, response); err != nil {
+			return fmt.Errorf("ExecuteCommand %s: %w", oid, err)
+		}
+		if exception := response.GetException(); exception != nil {
+			return fmt.Errorf("command %s exception: %s", oid, exception.GetDetails())
+		}
+		return nil
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
@@ -120,6 +163,13 @@ func (c *Client) ExecuteCommand(ctx context.Context, slot uint32, oid string, va
 
 // GetRawValue fetches the current proto Value for the given OID.
 func (c *Client) GetRawValue(ctx context.Context, slot uint32, oid string) (*st2138pb.Value, error) {
+	if c.usesREST() {
+		value := &st2138pb.Value{}
+		if _, err := c.restRequest(ctx, http.MethodGet, fmt.Sprintf("/%d/value/%s", slot, strings.Trim(oid, "/")), nil, nil, value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}

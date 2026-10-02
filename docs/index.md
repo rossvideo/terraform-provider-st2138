@@ -81,6 +81,7 @@ That example demonstrates:
 ## Runtime Notes
 
 - Transport defaults to `grpc` when not provided in `network.transport`.
-- The provider reads/writes values via gRPC and retries parameter set operations for transient failures.
+- Set `network.transport` to `grpc` or `rest`. REST uses the fixed SMPTE routes under `/st2138-api/v1`; devices do not advertise custom endpoint lists.
+- The provider retries parameter set operations for transient failures.
 - All parameter values are applied on create; on update only changed values are applied.
 

@@ -155,7 +155,7 @@ func (r *deviceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					},
 					"transport": schema.StringAttribute{
 						Optional:    true,
-						Description: "Transport type, defaults to grpc.",
+						Description: "Transport type: grpc or rest. Defaults to grpc.",
 					},
 					"tls": schema.BoolAttribute{
 						Optional:    true,
@@ -317,7 +317,7 @@ func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oi
 		oid := toFOID(key)
 		descriptor, err := r.client.GetParamDescriptor(ctx, slotNum, oid)
 		if err != nil {
-			diags.AddError("gRPC GetParam failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			diags.AddError("GetParam failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
 			return
 		}
 		protoValue, err := r.attrValueToProtoValue(rawValue, descriptor)
@@ -326,7 +326,7 @@ func (r *deviceResource) applySlotParams(ctx context.Context, slotNum uint32, oi
 			return
 		}
 		if err := r.setRawValueWithRetry(ctx, slotNum, oid, protoValue); err != nil {
-			diags.AddError("gRPC SetValue failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
+			diags.AddError("SetValue failed", fmt.Sprintf("slot %d oid %s: %s", slotNum, oid, err))
 			return
 		}
 	}

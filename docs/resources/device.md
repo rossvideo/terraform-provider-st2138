@@ -51,8 +51,8 @@ See full working example in [examples/catena-test/main.tf](https://github.com/ro
 - `slot` (Number): Device slot managed by this resource.
 - `network` (Block): Network target for this slot.
   - `address` (String, required): Hostname or IP.
-  - `port` (Number, required): gRPC port.
-  - `transport` (String, optional): Transport name. Defaults to `grpc` when empty.
+  - `port` (Number, required): Catena endpoint port.
+  - `transport` (String, optional): `grpc` or `rest`. Defaults to `grpc` when empty. REST uses the SMPTE routes under `/st2138-api/v1`.
   - `tls` (Bool, optional): Reserved for TLS support in this block.
 
 ### Optional

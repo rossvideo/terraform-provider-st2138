@@ -19,6 +19,14 @@ type DeviceSnapshot struct {
 // GetDeviceSnapshot calls DeviceRequest for the given slot and collects
 // writable parameters, all parameters, and commands from the streamed response.
 func (c *Client) GetDeviceSnapshot(ctx context.Context, slot uint32) (*DeviceSnapshot, error) {
+	if c.usesREST() {
+		device := &st2138pb.Device{}
+		if _, err := c.restRequest(ctx, "GET", fmt.Sprintf("/%d", slot), nil, map[string]string{"Detail-Level": "FULL"}, device); err != nil {
+			return nil, err
+		}
+		return snapshotFromDevice(device), nil
+	}
+
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
@@ -73,6 +81,25 @@ func (c *Client) GetDeviceSnapshot(ctx context.Context, slot uint32) (*DeviceSna
 	}
 
 	return result, nil
+}
+
+func snapshotFromDevice(device *st2138pb.Device) *DeviceSnapshot {
+	result := &DeviceSnapshot{
+		Parameters:     make(map[string]string),
+		FullParameters: make(map[string]string),
+		Commands:       make(map[string]string),
+	}
+	for oid, param := range device.GetParams() {
+		value := stringifyValue(param.GetValue())
+		result.FullParameters[oid] = value
+		if !param.GetReadOnly() {
+			result.Parameters[oid] = value
+		}
+	}
+	for oid, command := range device.GetCommands() {
+		result.Commands[oid] = stringifyValue(command.GetValue())
+	}
+	return result
 }
 
 // GetDeviceParams calls DeviceRequest for the given slot and collects all

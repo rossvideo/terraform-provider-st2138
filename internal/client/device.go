@@ -99,6 +99,13 @@ func (c *Client) WaitNotReady(ctx context.Context, slot uint32, endpoint string,
 // GetStringValue fetches a value for an OID and returns its string representation.
 // If the underlying value is numeric or boolean, it is converted to a string.
 func (c *Client) GetStringValue(ctx context.Context, slot uint32, oid string) (string, error) {
+	if c.usesREST() {
+		value, err := c.GetRawValue(ctx, slot, oid)
+		if err != nil {
+			return "", err
+		}
+		return stringifyValue(value), nil
+	}
 	if err := c.ensureConn(ctx); err != nil {
 		return "", err
 	}
