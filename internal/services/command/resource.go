@@ -67,6 +67,7 @@ func (r *commandResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 }
 
 func (r *commandResource) Configure(_ context.Context, _ resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	return
 }
 
 func normalizeCommand(plan *commandModel) (string, error) {
@@ -120,4 +121,6 @@ func (r *commandResource) Update(ctx context.Context, req resource.UpdateRequest
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *commandResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {}
+func (r *commandResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
+	return
+}

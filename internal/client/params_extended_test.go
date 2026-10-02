@@ -3,8 +3,10 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"math/big"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 	"google.golang.org/grpc"
@@ -38,6 +40,59 @@ func TestSetParamsWithSlot_ComplexJSON(t *testing.T) {
 	// With null dynamic, no setValue should be called
 	if setValueCalls != 0 {
 		t.Errorf("Expected 0 setValue calls with null dynamic, got %d", setValueCalls)
+	}
+}
+
+func TestSetParamsWithSlot_WalksNestedParameterValues(t *testing.T) {
+	var gotValues = make(map[string]*st2138pb.Value)
+	mockClient := &mockCatenaServiceClient{
+		setValueFunc: func(_ context.Context, request *st2138pb.SingleSetValuePayload, _ ...grpc.CallOption) (*st2138pb.Empty, error) {
+			gotValues[request.Value.Oid] = request.Value.Value
+			return &st2138pb.Empty{}, nil
+		},
+	}
+	client := &Client{Transport: "grpc", rpcClient: mockClient, conn: &grpc.ClientConn{}}
+
+	nestedType := types.ObjectType{AttrTypes: map[string]attr.Type{"volume": types.NumberType}}
+	listType := types.TupleType{ElemTypes: []attr.Type{types.NumberType, types.NumberType}}
+	parameterType := types.ObjectType{AttrTypes: map[string]attr.Type{
+		"name":    types.StringType,
+		"enabled": types.BoolType,
+		"levels":  listType,
+		"nested":  nestedType,
+	}}
+	parameters := types.ObjectValueMust(parameterType.AttrTypes, map[string]attr.Value{
+		"name":    types.StringValue("camera"),
+		"enabled": types.BoolValue(true),
+		"levels": types.TupleValueMust(listType.ElemTypes, []attr.Value{
+			types.NumberValue(big.NewFloat(1)),
+			types.NumberValue(big.NewFloat(2.5)),
+		}),
+		"nested": types.ObjectValueMust(nestedType.AttrTypes, map[string]attr.Value{"volume": types.NumberValue(big.NewFloat(9))}),
+	})
+	wrappedType := types.ObjectType{AttrTypes: map[string]attr.Type{"value": parameterType}}
+	wrapped := types.ObjectValueMust(wrappedType.AttrTypes, map[string]attr.Value{"value": parameters})
+
+	if err := client.SetParamsWithSlot(context.Background(), types.DynamicValue(wrapped), 4); err != nil {
+		t.Fatalf("SetParamsWithSlot() error = %v", err)
+	}
+	if len(gotValues) != 5 {
+		t.Fatalf("SetValue call count = %d, want 5 (%v)", len(gotValues), gotValues)
+	}
+	if got := gotValues["/name"].GetStringValue(); got != "camera" {
+		t.Errorf("/name = %q, want camera", got)
+	}
+	if got := gotValues["/enabled"].GetStringValue(); got != "true" {
+		t.Errorf("/enabled = %q, want true", got)
+	}
+	if got := gotValues["/levels/0"].GetInt32Value(); got != 1 {
+		t.Errorf("/levels/0 = %d, want 1", got)
+	}
+	if got := gotValues["/levels/1"].GetFloat32Value(); got != 2.5 {
+		t.Errorf("/levels/1 = %g, want 2.5", got)
+	}
+	if got := gotValues["/nested/volume"].GetInt32Value(); got != 9 {
+		t.Errorf("/nested/volume = %d, want 9", got)
 	}
 }
 

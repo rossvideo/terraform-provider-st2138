@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	clientpkg "github.com/rossvideo/terraform-provider-st2138/internal/client"
 )
 
 func TestDeviceResource_Metadata(t *testing.T) {
@@ -19,6 +20,31 @@ func TestDeviceResource_Metadata(t *testing.T) {
 
 	if resp.TypeName != "st2138_device" {
 		t.Errorf("Metadata() TypeName = %s, want st2138_device", resp.TypeName)
+	}
+}
+
+func TestDeviceResource_Configure(t *testing.T) {
+	if _, ok := NewDeviceResource().(*deviceResource); !ok {
+		t.Fatal("NewDeviceResource() should return a deviceResource")
+	}
+
+	r := &deviceResource{}
+	r.Configure(context.Background(), resource.ConfigureRequest{}, &resource.ConfigureResponse{})
+	if r.client != nil {
+		t.Fatal("Configure() should leave the client nil without provider data")
+	}
+
+	baseClient := &clientpkg.Client{Endpoint: "localhost:9080", Transport: "rest", DevicesDir: "/devices"}
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: baseClient}, &resource.ConfigureResponse{})
+	if r.client == nil || r.client == baseClient {
+		t.Fatal("Configure() should clone the provider client")
+	}
+	if r.client.Endpoint != baseClient.Endpoint || r.client.Transport != baseClient.Transport || r.client.DevicesDir != baseClient.DevicesDir {
+		t.Errorf("configured client = %#v, want copied provider settings", r.client)
+	}
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: "invalid"}, &resource.ConfigureResponse{})
+	if r.client == nil {
+		t.Fatal("unexpected provider data should leave the existing client unchanged")
 	}
 }
 

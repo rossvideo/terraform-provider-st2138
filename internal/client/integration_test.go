@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 
 // mockServerState maintains state across gRPC calls
 type mockServerState struct {
-	values   map[string]*st2138pb.Value // key: "slot:oid"
-	commands []string                   // track executed commands
+	mu               sync.RWMutex
+	values           map[string]*st2138pb.Value // key: "slot:oid"
+	commands         []string                   // track executed commands
+	deviceComponents []*st2138pb.DeviceComponent
 }
 
 type mockIntegrationServer struct {
@@ -26,14 +29,30 @@ type mockIntegrationServer struct {
 	state *mockServerState
 }
 
+func (s *mockIntegrationServer) DeviceRequest(req *st2138pb.DeviceRequestPayload, stream st2138pb.CatenaService_DeviceRequestServer) error {
+	s.state.mu.RLock()
+	components := append([]*st2138pb.DeviceComponent(nil), s.state.deviceComponents...)
+	s.state.mu.RUnlock()
+	for _, component := range components {
+		if err := stream.Send(component); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *mockIntegrationServer) SetValue(ctx context.Context, req *st2138pb.SingleSetValuePayload) (*st2138pb.Empty, error) {
 	key := fmt.Sprintf("%d:%s", req.Slot, req.Value.Oid)
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
 	s.state.values[key] = req.Value.Value
 	return &st2138pb.Empty{}, nil
 }
 
 func (s *mockIntegrationServer) GetValue(ctx context.Context, req *st2138pb.GetValuePayload) (*st2138pb.Value, error) {
 	key := fmt.Sprintf("%d:%s", req.Slot, req.Oid)
+	s.state.mu.RLock()
+	defer s.state.mu.RUnlock()
 	if val, ok := s.state.values[key]; ok {
 		return val, nil
 	}
@@ -45,6 +64,8 @@ func (s *mockIntegrationServer) GetValue(ctx context.Context, req *st2138pb.GetV
 
 func (s *mockIntegrationServer) ExecuteCommand(req *st2138pb.ExecuteCommandPayload, stream st2138pb.CatenaService_ExecuteCommandServer) error {
 	// Track command execution
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
 	s.state.commands = append(s.state.commands, req.Oid)
 
 	// For commands, set a status value
@@ -127,6 +148,55 @@ func TestIntegration_BasicStringParameter(t *testing.T) {
 
 	if got != "test-device" {
 		t.Errorf("GetStringValue() = %s, want test-device", got)
+	}
+}
+
+func TestIntegration_GetDeviceSnapshotCollectsAllComponentKinds(t *testing.T) {
+	endpoint, state, cleanup := setupIntegrationServer(t)
+	defer cleanup()
+
+	state.deviceComponents = []*st2138pb.DeviceComponent{
+		{Kind: &st2138pb.DeviceComponent_Device{Device: &st2138pb.Device{
+			Params: map[string]*st2138pb.Param{
+				"counter": {Value: &st2138pb.Value{Kind: &st2138pb.Value_Int32Value{Int32Value: 9}}},
+				"locked":  {ReadOnly: true, Value: &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: "fixed"}}},
+			},
+			Commands: map[string]*st2138pb.Param{
+				"reset": {Value: &st2138pb.Value{Kind: &st2138pb.Value_EmptyValue{EmptyValue: &st2138pb.Empty{}}}},
+			},
+		}}},
+		{Kind: &st2138pb.DeviceComponent_Param{Param: &st2138pb.DeviceComponent_ComponentParam{
+			Oid:   "extra",
+			Param: &st2138pb.Param{Value: &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: "value"}}},
+		}}},
+		{Kind: &st2138pb.DeviceComponent_Command{Command: &st2138pb.DeviceComponent_ComponentCommand{
+			Oid:     "start",
+			Command: &st2138pb.Param{Value: &st2138pb.Value{Kind: &st2138pb.Value_StringValue{StringValue: "start"}}},
+		}}},
+	}
+
+	c := &client.Client{Endpoint: endpoint, Transport: "grpc"}
+	defer c.Close()
+	snapshot, err := c.GetDeviceSnapshot(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("GetDeviceSnapshot() error = %v", err)
+	}
+	if snapshot.Parameters["counter"] != "9" || snapshot.Parameters["extra"] != "value" {
+		t.Errorf("writable parameters = %#v", snapshot.Parameters)
+	}
+	if snapshot.FullParameters["locked"] != "fixed" || snapshot.FullParameters["extra"] != "value" {
+		t.Errorf("full parameters = %#v", snapshot.FullParameters)
+	}
+	if snapshot.Commands["reset"] != "" || snapshot.Commands["start"] != "start" {
+		t.Errorf("commands = %#v", snapshot.Commands)
+	}
+
+	params, err := c.GetDeviceParams(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("GetDeviceParams() error = %v", err)
+	}
+	if params["counter"] != "9" || params["locked"] != "" {
+		t.Errorf("GetDeviceParams() = %#v", params)
 	}
 }
 

@@ -1,25 +1,22 @@
 #!/bin/bash
+set -euo pipefail
 
 echo "Running tests with coverage..."
 
 # Clean up old coverage files
-rm -f coverage.out lcov.info
+rm -f coverage-all.out coverage.out lcov.info
 rm -rf coverage/
 mkdir -p coverage
 
 # Ensure ~/go/bin is in PATH for installed Go tools
 export PATH="$HOME/go/bin:$PATH"
 
-# Run tests for all packages and collect coverage
-# Note: Suppress harmless warnings about packages with no tests
+# Run tests serially to avoid races in the integration-test mock.
 echo "Testing all packages..."
-go test ./... -coverprofile=coverage.out -covermode=atomic -count=1 2>&1 | \
-  grep -v "go: no such tool" | \
-  grep -v "google.golang.org/grpc" | \
-  grep -v "goroutine" | \
-  grep -v "runtime/netpoll" | \
-  grep -v "internal/poll" | \
-  grep -v "created by" || true
+go test ./... -coverprofile=coverage-all.out -covermode=atomic -count=1 -p=1 -parallel=1
+
+# Exclude generated protobuf code from the reported project coverage.
+grep -v '/internal/genproto/' coverage-all.out > coverage.out
 
 # Install gcov2lcov if not already installed
 if ! command -v gcov2lcov &> /dev/null; then
@@ -34,10 +31,11 @@ gcov2lcov -infile=coverage.out -outfile=lcov.info
 # Display coverage summary
 echo ""
 echo "Coverage Summary:"
-go tool cover -func=coverage.out | tail -10
+go tool cover -func=coverage.out | grep '^total:'
 
 echo ""
 echo "Coverage report generated:"
+echo "  - Raw Go format: coverage-all.out"
 echo "  - Go format: coverage.out"
 echo "  - LCOV format: lcov.info"
 echo ""

@@ -2,11 +2,11 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 	"google.golang.org/protobuf/proto"
@@ -182,56 +182,69 @@ func (c *Client) SetParamsWithSlot(ctx context.Context, dyn types.Dynamic, slot 
 	if err := c.ensureConn(ctx); err != nil {
 		return err
 	}
-	if dyn.IsNull() || dyn.IsUnknown() {
+	if dyn.IsNull() || dyn.IsUnknown() || dyn.UnderlyingValue() == nil {
 		return nil
-	}
-	var data any
-	// Decode via JSON marshal/unmarshal; if wrapper object has a "value" field, use it.
-	rawBytes, jerr := json.Marshal(dyn)
-	if jerr != nil || len(rawBytes) == 0 {
-		return nil
-	}
-	// First try direct decode
-	if uerr := json.Unmarshal(rawBytes, &data); uerr != nil {
-		return nil
-	}
-	// If result is a wrapper with common fields, extract nested "value"
-	if m, ok := data.(map[string]any); ok {
-		if v, vok := m["value"]; vok {
-			data = v
-		}
 	}
 	type pair struct {
 		oid string
 		v   any
 	}
 	var work []pair
-	var walk func(prefix string, node any)
-	walk = func(prefix string, node any) {
-		switch t := node.(type) {
-		case map[string]any:
-			for k, v := range t {
-				np := prefix + "/" + k
-				walk(np, v)
+	var walk func(prefix string, node attr.Value)
+	walk = func(prefix string, node attr.Value) {
+		switch value := node.(type) {
+		case types.Dynamic:
+			if !value.IsNull() && !value.IsUnknown() && value.UnderlyingValue() != nil {
+				walk(prefix, value.UnderlyingValue())
 			}
-		case []any:
-			for i, v := range t {
+		case types.Object:
+			for key, field := range value.Attributes() {
+				walk(prefix+"/"+key, field)
+			}
+		case types.Map:
+			for key, field := range value.Elements() {
+				walk(prefix+"/"+key, field)
+			}
+		case types.List:
+			for i, element := range value.Elements() {
 				np := fmt.Sprintf("%s/%d", prefix, i)
-				walk(np, v)
+				walk(np, element)
 			}
-		case string:
-			work = append(work, pair{oid: prefix, v: t})
-		case float64:
-			work = append(work, pair{oid: prefix, v: t})
-		case bool:
+		case types.Tuple:
+			for i, element := range value.Elements() {
+				np := fmt.Sprintf("%s/%d", prefix, i)
+				walk(np, element)
+			}
+		case types.String:
+			if !value.IsNull() && !value.IsUnknown() {
+				work = append(work, pair{oid: prefix, v: value.ValueString()})
+			}
+		case types.Number:
+			if !value.IsNull() && !value.IsUnknown() && value.ValueBigFloat() != nil {
+				number, _ := value.ValueBigFloat().Float64()
+				work = append(work, pair{oid: prefix, v: number})
+			}
+		case types.Bool:
 			// booleans treated as strings "true"/"false" unless a dedicated type is desired
-			work = append(work, pair{oid: prefix, v: t})
-		default:
-			// other scalar types not expected; ignore
+			if !value.IsNull() && !value.IsUnknown() {
+				work = append(work, pair{oid: prefix, v: value.ValueBool()})
+			}
+		}
+	}
+
+	root := dyn.UnderlyingValue()
+	switch value := root.(type) {
+	case types.Object:
+		if wrapped, ok := value.Attributes()["value"]; ok {
+			root = wrapped
+		}
+	case types.Map:
+		if wrapped, ok := value.Elements()["value"]; ok {
+			root = wrapped
 		}
 	}
 	// Start walk at root with empty prefix
-	walk("", data)
+	walk("", root)
 	for _, p := range work {
 		oid := p.oid
 		switch v := p.v.(type) {

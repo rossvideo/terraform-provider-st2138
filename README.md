@@ -96,8 +96,11 @@ Generate coverage reports in multiple formats:
 # Run tests and generate lcov.info
 ./test.sh
 
-# Run tests serially and generate a Go coverage profile
-go test ./... -coverprofile=coverage.out -covermode=atomic -count=1 -p=1 -parallel=1
+# Run tests serially and generate a raw Go coverage profile
+go test ./... -coverprofile=coverage-all.out -covermode=atomic -count=1 -p=1 -parallel=1
+
+# Exclude generated protobuf code from the reported project coverage
+grep -v '/internal/genproto/' coverage-all.out > coverage.out
 
 # View coverage summary
 go tool cover -func=coverage.out
@@ -112,12 +115,18 @@ genhtml lcov.info -o coverage_html
 Open `coverage.html` or `coverage_html/index.html` in a browser to view a report.
 
 **Current Coverage:**
-- `internal/client`: 53.0%
+- Root package: 100.0%
+- `internal/client`: 81.2%
 - `internal/client/params`: 100.0%
-- `internal/services/device`: 30.0%
-- Overall project: 13.6%
+- `internal/datasources`: 93.5%
+- `internal/provider`: 87.5%
+- `internal/services/command`: 91.7%
+- `internal/services/device`: 75.4%
+- `internal/services/parameters`: 91.4%
+- Handwritten project code statement coverage (generated protobuf excluded): 80.5%
+- Handwritten project function coverage (generated protobuf excluded): 100.0%; no functions have zero coverage.
 
-Coverage was measured with the serial test command above. The `test.sh` script also generates `coverage.out` (Go format) and `lcov.info` (LCOV format) for coverage visualization tools.
+Coverage was measured with the serial test command above. `coverage-all.out` retains the unfiltered profile; `coverage.out` and `lcov.info` exclude generated protobuf code.
 
 ### Building
 

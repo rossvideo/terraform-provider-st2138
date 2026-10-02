@@ -36,6 +36,7 @@ override.tf.json
 .terraformrc
 terraform.rc
 coverage.out
+coverage-all.out
 lcov.info
 
 DONE.md

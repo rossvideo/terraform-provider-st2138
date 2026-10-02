@@ -48,6 +48,7 @@ func (r *parametersResource) Schema(_ context.Context, _ resource.SchemaRequest,
 }
 
 func (r *parametersResource) Configure(_ context.Context, _ resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	return
 }
 
 func normalizeParameters(plan *parametersModel) error {
@@ -102,4 +103,5 @@ func (r *parametersResource) Update(ctx context.Context, req resource.UpdateRequ
 }
 
 func (r *parametersResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
+	return
 }

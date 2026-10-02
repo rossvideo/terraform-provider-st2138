@@ -3,8 +3,11 @@ package device
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	clientpkg "github.com/rossvideo/terraform-provider-st2138/internal/client"
 	st2138pb "github.com/rossvideo/terraform-provider-st2138/internal/genproto"
 	"google.golang.org/grpc"
 )
@@ -49,6 +52,24 @@ func TestDeviceResource_SetStringValueWithRetry_RetriesOnError(t *testing.T) {
 	_ = r.setStringValueWithRetry
 	_ = r.setNumberValueWithRetry
 	// Retry logic is in place with 3 attempts and exponential backoff
+}
+
+func TestDeviceResource_SetValueRetries_WithRESTClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("request method = %q, want PUT", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	r := &deviceResource{client: &clientpkg.Client{Endpoint: server.URL, Transport: "rest"}}
+	if err := r.setStringValueWithRetry(context.Background(), 0, "/name", "camera"); err != nil {
+		t.Fatalf("setStringValueWithRetry() error = %v", err)
+	}
+	if err := r.setNumberValueWithRetry(context.Background(), 0, "/counter", 5); err != nil {
+		t.Fatalf("setNumberValueWithRetry() error = %v", err)
+	}
 }
 
 func TestDeviceResource_DockerExec_ErrorHandling(t *testing.T) {
